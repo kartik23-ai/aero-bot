@@ -1,0 +1,42 @@
+services:
+  api:
+    build: .
+    env_file: .env.example
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aero_group_guard
+      POSTGRES_USER: aero
+      POSTGRES_PASSWORD: aero
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports:
+      - "3000:3000"
+volumes:
+  postgres-data:

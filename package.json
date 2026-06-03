@@ -1,0 +1,25 @@
+{
+  "name": "aerogroupguard",
+  "version": "1.0.0",
+  "description": "Production-ready Aero Messenger group management and AI assistant bot scaffold.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "moderation",
+    "group-chat",
+    "bot",
+    "aero-messenger",
+    "dashboard"
+  ],
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.17.0",
+    "firebase-admin": "^13.10.0",
+    "groq-sdk": "^1.2.1",
+    "socket.io-client": "^4.8.3"
+  }
+}

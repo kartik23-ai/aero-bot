@@ -1,0 +1,14 @@
+node_modules/
+db/session.json
+db/chats.json
+db/group_database.json
+db/aero-bot-*.json
+db/firebase_key.json
+.env
+.env.local
+.env.production
+.env.development
+.env.staging
+*.log
+index-CAipmyyE.js
+scratch_index.html

@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aerogroupguard-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aerogroupguard-worker
+  template:
+    metadata:
+      labels:
+        app: aerogroupguard-worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/aerogroupguard:latest
+          command: ["node", "src/server.js"]
+          envFrom:
+            - secretRef:
+                name: aerogroupguard-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AeroGroupGuard Bot Management Portal</title>
+    <link rel="stylesheet" href="/styles.css?v=3">
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="mark">AG</span>
+        <div>
+          <strong>AeroGroupGuard</strong>
+          <small>Bot Management Portal</small>
+        </div>
+      </div>
+      <nav>
+        <a href="#overview">Overview</a>
+        <a href="#installation">Install</a>
+        <a href="#owner">Owner Portal</a>
+        <a href="#admin">Admin Portal</a>
+        <a href="#user">User Portal</a>
+        <a href="#assistant-mode">Assistant Mode</a>
+        <a href="#manual">Manual Control</a>
+        <a href="#automations">Automations</a>
+        <a href="#commands">Commands</a>
+        <a href="#analytics">Analytics</a>
+        <a href="#reports">Reports</a>
+        <a href="#monitoring">Monitoring</a>
+        <a href="#user-approvals">Whitelist Approvals</a>
+        <a href="#security">Security</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Production SaaS Control Plane</p>
+          <h1>Manage every Aero group, command, report, and AI action from one portal.</h1>
+        </div>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search groups, users, commands">
+          <select id="roleSelect" aria-label="Portal role">
+            <option value="OWNER">Owner</option>
+            <option value="ADMIN">Admin</option>
+            <option value="USER">User</option>
+          </select>
+          <button id="themeToggle" type="button">Theme</button>
+          <button id="exportCsv" type="button">Export CSV</button>
+          <button id="exportExcel" type="button">Export Excel</button>
+        </div>
+      </header>
+
+      <section id="overview" class="metrics">
+        <article><span>Daily Active Users</span><strong id="dailyActiveUsers">0</strong></article>
+        <article><span>Weekly Active Users</span><strong id="weeklyActiveUsers">0</strong></article>
+        <article><span>Message Volume</span><strong id="messageVolume">0</strong></article>
+        <article><span>AI Requests</span><strong id="aiUsage">0</strong></article>
+        <article><span>Connected Groups</span><strong id="connectedGroups">0</strong></article>
+        <article><span>Open Reports</span><strong id="openReports">0</strong></article>
+      </section>
+
+      <section class="layout">
+        <div class="panel span-2" id="installation">
+          <div class="panel-head">
+            <h2>Group Connection System</h2>
+            <div class="connection-status-badge" id="botStatusBadge">
+              <span class="status-indicator offline"></span>
+              <strong id="statusBadgeText">Not Connected</strong>
+            </div>
+          </div>
+          
+          <div class="connection-container">
+            <div class="connection-tabs">
+              <button type="button" class="tab-btn active" id="tabApiBtn">Official API</button>
+              <button type="button" class="tab-btn" id="tabCookieBtn">Cookie Injection (Bypass)</button>
+              <button type="button" class="tab-btn" id="tabUserbotBtn">Userbot Mode (Direct Login)</button>
+            </div>
+            
+            <div class="connection-panels">
+              <!-- Tab 1: API (Traditional) -->
+              <div class="connection-panel active" id="panelApi">
+                <ol id="installSteps" class="timeline"></ol>
+                <div class="method-grid">
+                  <span>OAuth Login</span>
+                  <span>Official Webhooks</span>
+                  <span>Bot Tokens</span>
+                  <span>Platform-approved Integrations</span>
+                </div>
+              </div>
+
+              <!-- Tab 2: Cookie Injection -->
+              <div class="connection-panel" id="panelCookie">
+                <p class="panel-desc">Paste your Aero Messenger browser session cookies here to bypass official OAuth/API requirements. The bot will hijack the browser session to authenticate.</p>
+                <div class="form-grid">
+                  <label for="cookieInput">Browser Session Cookie (e.g. session_id=...; auth_token=...)
+                    <textarea id="cookieInput" placeholder="Paste session cookies here. E.g. session_id=a9f3b890987114cfb; auth_token=sess_83jfd902;"></textarea>
+                  </label>
+                  <button type="button" id="connectCookieBtn">Inject Cookie & Connect</button>
+                </div>
+              </div>
+
+              <!-- Tab 3: Aero Account Login -->
+              <div class="connection-panel" id="panelUserbot">
+                <p class="panel-desc">Login directly using your Aero Messenger account credentials. We will establish a real authenticated session and fetch your joined groups.</p>
+                <div class="form-grid" id="userbotLoginStage">
+                  <label for="userbotIdentifier">Email Address
+                    <input type="email" id="userbotIdentifier" placeholder="e.g. kaamset00@gmail.com">
+                  </label>
+                  <label for="userbotPassword">Password
+                    <input type="password" id="userbotPassword" placeholder="Enter your Aero password">
+                  </label>
+                  <button type="button" id="requestOtpBtn">Login to Aero Messenger</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal output logs showing the jugad flow working -->
+            <div class="terminal-container">
+              <div class="terminal-header">
+                <span class="terminal-title">Connection Scraper Monitor Terminal</span>
+                <button type="button" class="disconnect-btn hidden" id="disconnectBotBtn">Disconnect Bot</button>
+              </div>
+              <pre id="connectionTerminal" class="terminal-body">Scraper engine is idle. Select a method to initiate bot installation...</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel span-2" id="user-approvals">
+          <div class="panel-head">
+            <h2>User Approvals Whitelist</h2>
+            <span class="pill">Real-time Authorization</span>
+          </div>
+          <p class="panel-desc" style="margin-bottom:12px;">All user requests/messages to the bot are blocked unless approved here. System and bot owner are automatically whitelisted.</p>
+          <div class="control-grid">
+            <div>
+              <h3>Pending Approvals</h3>
+              <ul id="pendingApprovalsList" class="list" style="list-style-type:none; padding-left:0; display:grid; gap:10px;">
+                <li>No pending approvals.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Approved User IDs</h3>
+              <div id="approvedUsersList" class="chips" style="gap:5px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" id="owner">
+          <h2>Owner Portal</h2>
+          <div id="ownerCapabilities" class="chips"></div>
+          <div class="form-grid">
+            <label>Welcome Message <textarea id="welcomeMessage">Welcome, @user. Read /rules before posting.</textarea></label>
+            <label>Default Language
+              <select><option>English</option><option>Hindi</option><option>Hinglish</option></select>
+            </label>
+            <button type="button" data-action="save-owner">Save Owner Settings</button>
+          </div>
+        </div>
+
+        <div class="panel" id="admin">
+          <h2>Admin Portal</h2>
+          <table>
+            <thead><tr><th>Admin</th><th>Groups</th><th>Permissions</th></tr></thead>
+            <tbody id="adminRows"></tbody>
+          </table>
+        </div>
+
+        <div class="panel" id="user">
+          <h2>User Portal</h2>
+          <div class="quick-grid">
+            <button type="button">View Rules</button>
+            <button type="button">Submit Report</button>
+            <button type="button">View FAQs</button>
+            <button type="button">Request Support</button>
+          </div>
+        </div>
+
+        <div class="panel span-2" id="assistant-mode">
+          <div class="panel-head">
+            <h2>Automated Assistant Mode</h2>
+            <span class="pill">Non-destructive automation</span>
+          </div>
+          <div class="control-grid">
+            <div>
+              <p>The bot auto-responds when an approved event source sends group events to the webhook.</p>
+              <div id="assistantModeChips" class="chips"></div>
+              <h3>Allowed Auto Replies</h3>
+              <div id="allowedReplies" class="chips"></div>
+              <h3>Blocked Actions</h3>
+              <div id="blockedActions" class="chips"></div>
+            </div>
+            <div>
+              <h3>Latest Auto Replies</h3>
+              <ul id="outboundMessages" class="list"></ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel span-2" id="manual">
+          <div class="panel-head">
+            <h2>Manual Control Center</h2>
+            <span class="pill">Owner/Admin</span>
+          </div>
+          <div class="control-grid">
+            <form id="manualMessageForm" class="control-card">
+              <h3>Custom Message System</h3>
+              <label>Target Groups
+                <select id="messageGroups" multiple></select>
+              </label>
+              <label>Message
+                <textarea id="manualMessage" placeholder="Announcement, reminder, maintenance notice"></textarea>
+              </label>
+              <div class="button-row">
+                <button type="button" id="previewMessage">Preview</button>
+                <button type="button" id="sendMessage">Send</button>
+                <button type="button" id="scheduleMessage">Schedule</button>
+              </div>
+              <pre id="messagePreview" class="console-output">Preview will appear here.</pre>
+            </form>
+
+            <form id="aiConsoleForm" class="control-card">
+              <h3>AI Command Console</h3>
+              <div id="consoleHistory" class="chat-console"></div>
+              <label>Instruction
+                <input id="consoleInstruction" placeholder="Generate weekly report">
+              </label>
+              <button type="button" id="runConsole">Run Instruction</button>
+            </form>
+          </div>
+
+          <form id="manualModerationForm" class="control-card" style="margin-top: 12px; margin-bottom: 12px;">
+            <h3>Manual Moderation System</h3>
+            <p class="panel-desc" style="margin-bottom:8px;">Directly kick or ban a member from selected target groups using their User ID.</p>
+            <div style="display:grid; grid-template-columns:1fr auto; gap:10px; align-items:end;">
+              <label style="margin-bottom:0;">Target User ID
+                <input id="moderationUserId" placeholder="e.g. user-7719ab23" style="width:100%;">
+              </label>
+              <div class="button-row">
+                <button type="button" id="manualKickBtn" style="background:var(--danger); border-color:var(--danger);">Manual Kick</button>
+                <button type="button" id="manualBanBtn" style="background:var(--danger); border-color:var(--danger);">Manual Ban</button>
+              </div>
+            </div>
+          </form>
+
+          <h3>Live Group Control</h3>
+          <div id="liveControls" class="quick-grid"></div>
+
+          <h3>Quick Action Panel</h3>
+          <div id="quickActions" class="quick-grid"></div>
+        </div>
+
+        <div class="panel" id="automations">
+          <h2>Automation Builder</h2>
+          <div class="automation-builder">
+            <label>IF <input id="autoTrigger" value="user joins"></label>
+            <label>WHEN <input id="autoCondition" value="any group"></label>
+            <label>THEN <input id="autoAction" value="send welcome message"></label>
+            <button type="button" id="saveAutomation">Save Automation</button>
+          </div>
+          <ul id="automationList" class="list"></ul>
+        </div>
+
+        <div class="panel" id="commands">
+          <h2>Custom Commands</h2>
+          <div class="automation-builder">
+            <label>Command <input id="commandName" value="/event"></label>
+            <label>Response <textarea id="commandResponse">Event details will be posted soon.</textarea></label>
+            <button type="button" id="saveCommand">Save Command</button>
+          </div>
+          <ul id="commandList" class="list"></ul>
+        </div>
+
+        <div class="panel" id="analytics">
+          <h2>Analytics Portal</h2>
+          <div class="chart-row">
+            <div><span>Growth</span><div class="bar"><i id="growthBar"></i></div></div>
+            <div><span>Engagement</span><div class="bar"><i id="engagementBar"></i></div></div>
+            <div><span>AI Usage</span><div class="bar"><i id="aiBar"></i></div></div>
+          </div>
+          <pre id="analyticsText" class="console-output"></pre>
+        </div>
+
+        <div class="panel" id="reports">
+          <h2>Reports</h2>
+          <ul id="reportList" class="list"></ul>
+        </div>
+
+        <div class="panel span-2" id="monitoring">
+          <h2>Real-Time Monitoring</h2>
+          <div class="monitor-grid">
+            <div><h3>Connected Groups</h3><table><tbody id="groupRows"></tbody></table></div>
+            <div><h3>Activity Feed</h3><ul id="activityFeed" class="list"></ul></div>
+            <div><h3>Notifications</h3><ul id="notifications" class="list"></ul></div>
+            <div><h3>Audit Logs</h3><ul id="auditList" class="list"></ul></div>
+          </div>
+        </div>
+
+        <div class="panel span-2" id="security">
+          <h2>Security and Production Controls</h2>
+          <div class="method-grid">
+            <span>JWT Authentication</span>
+            <span>Refresh Tokens</span>
+            <span>RBAC Permissions</span>
+            <span>Audit Logs</span>
+            <span>IP Protection</span>
+            <span>Rate Limiting</span>
+            <span>Encryption at Rest</span>
+            <span>Encryption in Transit</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js?v=5"></script>
+  </body>
+</html>
