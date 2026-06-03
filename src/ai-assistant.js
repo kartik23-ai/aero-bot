@@ -14,10 +14,46 @@ class AiAssistant {
     this.enabled = options.enabled !== false;
     this.faq = options.faq || new Map();
     
-    const apiKey = process.env.GROQ_API_KEY || "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";
-    if (Groq && apiKey) {
-      this.groq = new Groq({ apiKey });
+    // Support single key or comma-separated keys pool
+    let keys = [];
+    if (process.env.GROQ_API_KEY) {
+      keys = process.env.GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
     }
+    if (keys.length === 0) {
+      keys = [
+        "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",
+        "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"
+      ];
+    }
+    this.keys = keys;
+    this.currentKeyIndex = 0;
+    this.groq = null;
+  }
+
+  async runChatCompletion(params) {
+    if (!Groq) throw new Error("groq-sdk not installed");
+    if (this.keys.length === 0) throw new Error("No API keys configured");
+
+    let lastError = null;
+    for (let attempts = 0; attempts < this.keys.length; attempts++) {
+      const activeKey = this.keys[this.currentKeyIndex];
+      if (!this.groq || this.groq.apiKey !== activeKey) {
+        this.groq = new Groq({ apiKey: activeKey });
+        // Set a property to track which key is active on the instance
+        this.groq.apiKey = activeKey;
+      }
+      try {
+        return await this.groq.chat.completions.create(params);
+      } catch (err) {
+        console.error(`[AI] chat.completions failed with key index ${this.currentKeyIndex}:`, err.message);
+        lastError = err;
+        // Cycle to next key in the pool
+        this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
+        this.groq = new Groq({ apiKey: this.keys[this.currentKeyIndex] });
+        this.groq.apiKey = this.keys[this.currentKeyIndex];
+      }
+    }
+    throw lastError || new Error("All keys exhausted");
   }
 
   async answer({ text, rules, role = "USER", language }) {
@@ -45,34 +81,30 @@ class AiAssistant {
       }
     }
 
-    if (this.groq) {
-      try {
-        const response = await this.groq.chat.completions.create({
-          messages: [
-            {
-              role: "system",
-              content: `You are AeroGroupGuard, a friendly and conversational AI assistant bot for Aero Messenger chats. Respond to the user's question in an engaging, supportive, and helpful tone. Guidelines:
-              1. Keep your reply concise (no more than 1-2 short paragraphs).
-              2. Do NOT write coding scripts, generate code blocks, or solve programming tasks.
-              3. Strictly refuse to assist with any illegal, unethical, or malicious activities.
-              Group Rules to respect: ${rules || "Be respectful and avoid spam."}`
-            },
-            {
-              role: "user",
-              content: text
-            }
-          ],
-          model: this.model,
-          max_tokens: 800,
-          temperature: 0.7
-        });
-        return response.choices[0]?.message?.content || "No response received from AI.";
-      } catch (err) {
-        return `AI Assistant Error: ${err.message}`;
-      }
+    try {
+      const response = await this.runChatCompletion({
+        messages: [
+          {
+            role: "system",
+            content: `You are AeroGroupGuard, a friendly and conversational AI assistant bot for Aero Messenger chats. Respond to the user's question in an engaging, supportive, and helpful tone. Guidelines:
+            1. Keep your reply concise (no more than 1-2 short paragraphs).
+            2. Do NOT write coding scripts, generate code blocks, or solve programming tasks.
+            3. Strictly refuse to assist with any illegal, unethical, or malicious activities.
+            Group Rules to respect: ${rules || "Be respectful and avoid spam."}`
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+        model: this.model,
+        max_tokens: 800,
+        temperature: 0.7
+      });
+      return response.choices[0]?.message?.content || "No response received from AI.";
+    } catch (err) {
+      return `AI Assistant Error (All keys exhausted): ${err.message}`;
     }
-
-    return "I can help with rules, reports, summaries, and group questions.";
   }
 }
 

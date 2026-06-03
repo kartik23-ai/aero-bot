@@ -646,9 +646,9 @@ aero.onMessage(async (msg) => {
     const localAbusiveRegex = /\b(mc|bc|bhenchod|bhenchodd|madarchod|chutiya|chutiye|lund|gandu|saala|harami|bkl|mkl|kuta|kutta|chut|randi|suar|kamine|gaali)\b/i;
     let isAbusiveMsg = localAbusiveRegex.test(text);
 
-    if (!isAbusiveMsg && ai.enabled && ai.groq) {
+    if (!isAbusiveMsg && ai.enabled && ai.keys && ai.keys.length > 0) {
       try {
-        const aiCheck = await ai.groq.chat.completions.create({
+        const aiCheck = await ai.runChatCompletion({
           messages: [
             {
               role: "system",
