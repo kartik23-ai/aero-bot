@@ -20,13 +20,27 @@ const ai = new AiAssistant({ model: config.aiModel });
 // Initialize Firebase connection if key exists
 let firestoreDb = null;
 let groupDbCache = null;
+let serviceAccount = null;
 const firebaseKeyPath = path.join(__dirname, "..", "db", "firebase_key.json");
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    console.log("[Firebase] Loading credentials from environment variable.");
+  } catch (err) {
+    console.error("[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON env variable:", err.message);
+  }
+} else if (fs.existsSync(firebaseKeyPath)) {
+  try {
+    serviceAccount = require(firebaseKeyPath);
+    console.log("[Firebase] Loading credentials from firebase_key.json file.");
+  } catch (err) {
+    console.error("[Firebase] Failed to read firebase_key.json file:", err.message);
+  }
+}
 
-if (fs.existsSync(firebaseKeyPath)) {
+if (serviceAccount) {
   try {
     const firebaseAdmin = require("firebase-admin");
-    const serviceAccount = require(firebaseKeyPath);
-
     firebaseAdmin.initializeApp({
       credential: firebaseAdmin.credential.cert(serviceAccount)
     });
@@ -36,7 +50,7 @@ if (fs.existsSync(firebaseKeyPath)) {
     console.error("[Firebase] Failed to initialize Firebase Admin SDK:", err.message);
   }
 } else {
-  console.log("[Firebase] firebase_key.json not found. Using local JSON database.");
+  console.log("[Firebase] Credentials not found. Using local JSON database.");
 }
 
 function loadGroupDb() {
