@@ -1,3 +1,13 @@
+---
+title: AeroGroupGuard
+emoji: 🛡️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # AeroGroupGuard Production Bot
 
 AeroGroupGuard is a production-oriented Aero Messenger group management and AI assistant bot scaffold.
