@@ -11,5 +11,5 @@ COPY public ./public
 COPY db ./db
 COPY docs ./docs
 
-EXPOSE 8080
+EXPOSE 7860
 CMD ["node", "src/server.js"]

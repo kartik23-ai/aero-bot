@@ -2,7 +2,7 @@
 
 const config = Object.freeze({
   env: process.env.NODE_ENV || "development",
-  port: Number.parseInt(process.env.PORT || "8080", 10),
+  port: Number.parseInt(process.env.PORT || "7860", 10),
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:8080",
   aeroApiBaseUrl: process.env.AERO_API_BASE_URL || "",
   aeroClientId: process.env.AERO_CLIENT_ID || "",
