@@ -460,8 +460,40 @@ aero.onMessage(async (msg) => {
       try {
         console.log(`[DM Setup] Invoking join for code: ${inviteCode}`);
         const joinRes = await aero.joinDock(inviteCode);
-        const newDockId = joinRes?.dock?._id || joinRes?.dock?.id || joinRes?._id || joinRes?.id;
-        const joinedDockName = joinRes?.dock?.name || "Aero Group";
+        
+        let newDockId = joinRes?.dock?._id || joinRes?.dock?.id || joinRes?._id || joinRes?.id;
+        if (!newDockId && typeof joinRes?.dock === "string") {
+          newDockId = joinRes.dock;
+        }
+        if (!newDockId && typeof joinRes?.dockId === "string") {
+          newDockId = joinRes.dockId;
+        }
+        
+        // Fallback: search in refreshed aero.docks for a dock not in db.groups
+        if (!newDockId && Array.isArray(aero.docks)) {
+          const uninitializedDock = aero.docks.find(d => !db.groups || !db.groups[d.id]);
+          if (uninitializedDock) {
+            newDockId = uninitializedDock.id;
+            console.log(`[DM Setup] Resolved newDockId via uninitialized dock fallback: ${newDockId}`);
+          }
+        }
+        
+        // Fallback 2: use the last dock in aero.docks
+        if (!newDockId && Array.isArray(aero.docks) && aero.docks.length > 0) {
+          newDockId = aero.docks[aero.docks.length - 1].id;
+          console.log(`[DM Setup] Resolved newDockId via last dock fallback: ${newDockId}`);
+        }
+
+        let joinedDockName = "Aero Group";
+        if (newDockId && Array.isArray(aero.docks)) {
+          const matchingDock = aero.docks.find(d => d.id === newDockId);
+          if (matchingDock) {
+            joinedDockName = matchingDock.name;
+          }
+        }
+        if (joinedDockName === "Aero Group" && joinRes?.dock?.name) {
+          joinedDockName = joinRes.dock.name;
+        }
 
         if (newDockId) {
           // Initialize group settings in database
