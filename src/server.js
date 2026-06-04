@@ -75,7 +75,7 @@ function formatAnnouncement(text, author) {
 📣 OFFICIAL ANNOUNCEMENT & BROADCAST
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${text}
+**${text}**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 👤 AUTHORIZED SIGNATORY: @${author}
@@ -422,6 +422,9 @@ let connectionLogs = [
 // Keep track of last message timestamps for slowmode software enforcer
 const lastMessageTime = new Map();
 
+// Interactive user report confirmation cache
+const pendingUserReports = new Map();
+
 // Socket Message Listener
 aero.onMessage(async (msg) => {
   const senderObj = msg.senderId || msg.sender;
@@ -752,7 +755,8 @@ aero.onMessage(async (msg) => {
           text: text,
           rules: "Be helpful, polite, and answer in English.",
           role: "USER",
-          language: "en"
+          language: "en",
+          senderName: senderName
         });
         await aero.sendMessage(dockId, reply);
         queueAssistantReply(dockId, reply, "dm_reply");
@@ -804,13 +808,37 @@ aero.onMessage(async (msg) => {
 
   const botMentionText = bot.botMention.toLowerCase();
   const lowerText = text.toLowerCase();
-  const isMention = lowerText.includes(botMentionText);
+  
+  let isReplyToBot = false;
+  const replyToMsg = msg.replyToMessageId || msg.replyTo;
+  if (replyToMsg) {
+    const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+    const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+    const botUserId = aero.user?._id || aero.user?.id;
+    if (botUserId && parentSenderId === botUserId) {
+      isReplyToBot = true;
+    } else if (parentSenderObj && typeof parentSenderObj === "object") {
+      const parentUsername = String(parentSenderObj.username || "").toLowerCase();
+      if (parentUsername === "aerogroupguard" || (aero.user && parentUsername === String(aero.user.username || "").toLowerCase())) {
+        isReplyToBot = true;
+      }
+    }
+  }
 
-  // Fetch chat history for summaries (only on mention or summary command)
+  let isMention = lowerText.includes(botMentionText) || isReplyToBot;
+
+  // Avoid AI reply for morbid topics
+  const morbidRegex = /\b(mar gya|mar gaya|death|die|dying|dead|grave|graveyard|funeral|cremate|cremation|suicide|kill|kabristan|shmashan|shamsan|rip|passed away|mortuary|coffin)\b/i;
+  if (isMention && morbidRegex.test(text)) {
+    isMention = false;
+  }
+
+  // Fetch chat history for summaries (only on summary/recap command or request)
   let chatHistory = [];
   const isSummaryCmd = parsedCmd && ["summary", "weeklysummary", "chatrecap", "recap"].includes(parsedCmd.name);
+  const isSummaryOrRecapRequest = isSummaryCmd || (isMention && (lowerText.includes("summary") || lowerText.includes("summarize") || lowerText.includes("recap") || lowerText.includes("chat history") || lowerText.includes("chatrecap")));
   
-  if (isMention || isSummaryCmd) {
+  if (isSummaryOrRecapRequest) {
     try {
       const msgs = await aero.getMessagesDays(dockId, 1);
       chatHistory = msgs.map(m => {
@@ -921,7 +949,10 @@ aero.onMessage(async (msg) => {
     const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi)\b/i;
     let isAbusiveMsg = localAbusiveRegex.test(text);
 
-    if (!isAbusiveMsg && ai.enabled && ai.keys && ai.keys.length > 0) {
+    const suspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chut|gand|lund|gaand|saal|kutt|kamin|haram|raand|randi|saala|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
+    const isSuspicious = suspiciousRegex.test(text);
+
+    if (!isAbusiveMsg && isSuspicious && ai.enabled && ai.keys && ai.keys.length > 0) {
       try {
         const aiCheck = await ai.runChatCompletion({
           messages: [
@@ -1227,18 +1258,75 @@ aero.onMessage(async (msg) => {
     } else if (cmdName === "status") {
       reply = `Group Status: Rules: ${groupSettings.rules.substring(0, 30)}..., Lock: ${groupSettings.locked ? "locked" : "unlocked"}, Slowmode: ${groupSettings.slowmodeSeconds > 0 ? groupSettings.slowmodeSeconds + "s" : "disabled"}, Abusive filter: ${groupSettings.abusiveFilter ? "enabled" : "disabled"}, Admins allowed to edit: ${groupSettings.allowAdminsToEdit ? "yes" : "no"}, Warnings logged: ${Object.keys(groupSettings.warnings).length}`;
     } else if (cmdName === "report") {
-      const reason = argsText || "No reason provided.";
-      const reportId = `report-${reports.length + 1}`;
-      reports.push({
-        id: reportId,
-        groupId: dockId,
-        userId: senderId,
-        text: reason,
-        status: "open",
-        createdAt: new Date().toISOString()
-      });
-      reply = "Report received. An admin will review this.";
-      console.log(`[Reports] New report filed in chat: ${reportId} for user ${senderId} in dock ${dockId}`);
+      const reason = argsText || "";
+      if (!reason) {
+        reply = "Please specify the report complaint. E.g. `/report Spam in chat`";
+      } else {
+        pendingUserReports.set(senderId, {
+          dockId: dockId,
+          reportText: reason,
+          senderName: senderName,
+          timestamp: Date.now()
+        });
+        reply = `⚠️ @${senderName}, please confirm your report by replying with **/yes** or **/no**.\n\n⚠️ **WARNING**: Agar koi faltu ka message ya bemtlb ka message hua to vo id ban ya terminate ka cause ban sakta he.`;
+      }
+    } else if (cmdName === "yes") {
+      const pendingReport = pendingUserReports.get(senderId);
+      if (pendingReport) {
+        let targetIssuesDockId = null;
+        try {
+          const res = await aero.joinDock("CPXBZM");
+          targetIssuesDockId = res?.dock?._id || res?.dock?.id || res?._id || res?.id || res?.dockId;
+        } catch (err) {
+          // Ignore join failure as bot might already be in dock
+        }
+        if (!targetIssuesDockId) {
+          await aero.fetchDocks();
+          const found = aero.docks.find(d => d.name && (d.name.toLowerCase().includes("issue") || d.name.toLowerCase().includes("suggestion")));
+          if (found) {
+            targetIssuesDockId = found.id;
+          }
+        }
+        
+        if (targetIssuesDockId) {
+          const resolvedReportText = `📢 **New Suggestion / Bug Report**\n👤 **Submitted by**: @${pendingReport.senderName} (${senderId})\n📝 **Description**: ${pendingReport.reportText}`;
+          await aero.sendMessage(targetIssuesDockId, resolvedReportText);
+          
+          const reportId = `report-${reports.length + 1}`;
+          reports.push({
+            id: reportId,
+            groupId: pendingReport.dockId,
+            userId: senderId,
+            text: pendingReport.reportText,
+            status: "open",
+            createdAt: new Date().toISOString()
+          });
+          
+          reply = `✅ Report successfully submitted to Aero Issues & Suggestions!`;
+        } else {
+          reply = `❌ Failed to locate the suggestion dock. Report has been logged on the local system instead.`;
+          const reportId = `report-${reports.length + 1}`;
+          reports.push({
+            id: reportId,
+            groupId: pendingReport.dockId,
+            userId: senderId,
+            text: pendingReport.reportText,
+            status: "open",
+            createdAt: new Date().toISOString()
+          });
+        }
+        pendingUserReports.delete(senderId);
+      } else {
+        reply = "❌ You don't have any pending report to confirm.";
+      }
+    } else if (cmdName === "no") {
+      const pendingReport = pendingUserReports.get(senderId);
+      if (pendingReport) {
+        reply = `❌ Report cancelled.`;
+        pendingUserReports.delete(senderId);
+      } else {
+        reply = "❌ You don't have any pending report to cancel.";
+      }
     } else if (["admin", "admins"].includes(cmdName)) {
       if (!isGroup) {
         reply = "❌ This command can only be used inside group chats.";
@@ -1645,7 +1733,31 @@ async function webhook(req) {
   if (eventType === "message" || eventType === "newMessage") {
     const botMentionText = bot.botMention.toLowerCase();
     const lowerText = (text || "").toLowerCase();
-    const isMention = lowerText.includes(botMentionText);
+    
+    let isReplyToBot = false;
+    const replyToMsg = body.replyToMessageId || body.replyTo || (body.message && (body.message.replyToMessageId || body.message.replyTo));
+    if (replyToMsg) {
+      const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+      const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+      const botUserId = aero.user?._id || aero.user?.id;
+      if (botUserId && parentSenderId === botUserId) {
+        isReplyToBot = true;
+      } else if (parentSenderObj && typeof parentSenderObj === "object") {
+        const parentUsername = String(parentSenderObj.username || "").toLowerCase();
+        if (parentUsername === "aerogroupguard" || (aero.user && parentUsername === String(aero.user.username || "").toLowerCase())) {
+          isReplyToBot = true;
+        }
+      }
+    }
+
+    let isMention = lowerText.includes(botMentionText) || isReplyToBot;
+
+    // Avoid AI reply for morbid topics
+    const morbidRegex = /\b(mar gya|mar gaya|death|die|dying|dead|grave|graveyard|funeral|cremate|cremation|suicide|kill|kabristan|shmashan|shamsan|rip|passed away|mortuary|coffin)\b/i;
+    if (isMention && morbidRegex.test(text || "")) {
+      isMention = false;
+    }
+
     const parsedCmd = bot.parseCommand(text || "");
 
     let reply = null;
@@ -1677,12 +1789,86 @@ async function webhook(req) {
     } else {
       if (parsedCmd) {
         const cmdName = parsedCmd.name;
-        const matchingCommand = customCommands.find(c => {
-          const normName = c.name.replace(/^\//, "").toLowerCase();
-          return normName === cmdName;
-        });
-        if (matchingCommand) {
-          reply = matchingCommand.response;
+        const argsText = parsedCmd.argsText || "";
+        const senderId = sender.id || sender._id || "unknown";
+        const senderName = sender.username || sender.displayName || "User";
+
+        if (cmdName === "report") {
+          const reason = argsText || "";
+          if (!reason) {
+            reply = "Please specify the report complaint. E.g. `/report Spam in chat`";
+          } else {
+            pendingUserReports.set(senderId, {
+              dockId: webhookDockId,
+              reportText: reason,
+              senderName: senderName,
+              timestamp: Date.now()
+            });
+            reply = `⚠️ @${senderName}, please confirm your report by replying with **/yes** or **/no**.\n\n⚠️ **WARNING**: Agar koi faltu ka message ya bemtlb ka message hua to vo id ban ya terminate ka cause ban sakta he.`;
+          }
+        } else if (cmdName === "yes") {
+          const pendingReport = pendingUserReports.get(senderId);
+          if (pendingReport) {
+            let targetIssuesDockId = null;
+            try {
+              const res = await aero.joinDock("CPXBZM");
+              targetIssuesDockId = res?.dock?._id || res?.dock?.id || res?._id || res?.id || res?.dockId;
+            } catch (err) {}
+            if (!targetIssuesDockId) {
+              await aero.fetchDocks();
+              const found = aero.docks.find(d => d.name && (d.name.toLowerCase().includes("issue") || d.name.toLowerCase().includes("suggestion")));
+              if (found) {
+                targetIssuesDockId = found.id;
+              }
+            }
+            
+            if (targetIssuesDockId) {
+              const resolvedReportText = `📢 **New Suggestion / Bug Report**\n👤 **Submitted by**: @${pendingReport.senderName} (${senderId})\n📝 **Description**: ${pendingReport.reportText}`;
+              await aero.sendMessage(targetIssuesDockId, resolvedReportText);
+              
+              const reportId = `report-${reports.length + 1}`;
+              reports.push({
+                id: reportId,
+                groupId: pendingReport.dockId,
+                userId: senderId,
+                text: pendingReport.reportText,
+                status: "open",
+                createdAt: new Date().toISOString()
+              });
+              
+              reply = `✅ Report successfully submitted to Aero Issues & Suggestions!`;
+            } else {
+              reply = `❌ Failed to locate the suggestion dock. Report has been logged on the local system instead.`;
+              const reportId = `report-${reports.length + 1}`;
+              reports.push({
+                id: reportId,
+                groupId: pendingReport.dockId,
+                userId: senderId,
+                text: pendingReport.reportText,
+                status: "open",
+                createdAt: new Date().toISOString()
+              });
+            }
+            pendingUserReports.delete(senderId);
+          } else {
+            reply = "❌ You don't have any pending report to confirm.";
+          }
+        } else if (cmdName === "no") {
+          const pendingReport = pendingUserReports.get(senderId);
+          if (pendingReport) {
+            reply = `❌ Report cancelled.`;
+            pendingUserReports.delete(senderId);
+          } else {
+            reply = "❌ You don't have any pending report to cancel.";
+          }
+        } else {
+          const matchingCommand = customCommands.find(c => {
+            const normName = c.name.replace(/^\//, "").toLowerCase();
+            return normName === cmdName;
+          });
+          if (matchingCommand) {
+            reply = matchingCommand.response;
+          }
         }
       }
       if (!reply) {
@@ -1709,7 +1895,8 @@ async function askAi(req) {
     text: sanitizeText(body.question),
     rules: bot.config.rules,
     role: body.role || "USER",
-    language: body.language
+    language: body.language,
+    senderName: body.senderName || (body.actor && (body.actor.username || body.actor.id))
   });
   return json(200, { answer, model: config.aiModel });
 }

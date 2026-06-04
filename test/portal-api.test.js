@@ -163,6 +163,134 @@ test("custom commands execute via webhook", async () => {
   }
 });
 
+test("webhook detects reply-to-bot and skips morbid topics", async () => {
+  const { baseUrl, close } = await startServer();
+  try {
+    // 1. Test reply to bot (parent sender is aerogroupguard) triggers AI faq
+    const response = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        groupName: "Aero Community",
+        text: "faq",
+        replyToMessageId: {
+          senderId: { username: "aerogroupguard" },
+          text: "Hi"
+        },
+        sender: { id: "user-201" }
+      })
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.match(body.reply, /FAQ:/);
+
+    // 2. Test morbid topic check does NOT trigger AI even if replying to bot
+    const morbidResponse = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        groupName: "Aero Community",
+        text: "mar gya",
+        replyToMessageId: {
+          senderId: { username: "aerogroupguard" },
+          text: "Hi"
+        },
+        sender: { id: "user-201" }
+      })
+    });
+    const morbidBody = await morbidResponse.json();
+    assert.equal(morbidResponse.status, 200);
+    // Since isMention is set to false, it should default to handleMessage and get handled as normal text, returning null / ok: true
+    assert.equal(morbidBody.reply, undefined);
+    assert.equal(morbidBody.ok, true);
+  } finally {
+    await close();
+  }
+});
+
+test("webhook processes interactive report command, warning, yes and no confirmation restrictions", async () => {
+  const { baseUrl, close } = await startServer();
+  try {
+    // 1. User user-abc files a report
+    const initRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/report Server lag issues",
+        sender: { id: "user-abc", username: "alex" }
+      })
+    });
+    const initBody = await initRes.json();
+    assert.equal(initRes.status, 200);
+    assert.match(initBody.reply, /please confirm your report/);
+    assert.match(initBody.reply, /id ban ya terminate/); // Warning should be there
+
+    // 2. Different user user-diff tries to confirm the report (should be blocked)
+    const diffConfirmRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/yes",
+        sender: { id: "user-diff", username: "bob" }
+      })
+    });
+    const diffConfirmBody = await diffConfirmRes.json();
+    assert.equal(diffConfirmRes.status, 200);
+    assert.match(diffConfirmBody.reply, /don't have any pending report/);
+
+    // 3. User alex cancels report using /no
+    const cancelRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/no",
+        sender: { id: "user-abc", username: "alex" }
+      })
+    });
+    const cancelBody = await cancelRes.json();
+    assert.equal(cancelRes.status, 200);
+    assert.match(cancelBody.reply, /Report cancelled/);
+
+    // 4. File again to verify successful confirmation
+    await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/report Suggestion text",
+        sender: { id: "user-abc", username: "alex" }
+      })
+    });
+
+    const confirmRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/yes",
+        sender: { id: "user-abc", username: "alex" }
+      })
+    });
+    const confirmBody = await confirmRes.json();
+    assert.equal(confirmRes.status, 200);
+    assert.match(confirmBody.reply, /Report successfully submitted|Failed to locate the suggestion dock/);
+  } finally {
+    await close();
+  }
+});
+
 function startServer() {
   return new Promise((resolve) => {
     const listener = server.listen(0, () => {
