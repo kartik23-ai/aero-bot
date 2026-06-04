@@ -754,7 +754,7 @@ aero.onMessage(async (msg) => {
 
   // 3. Abusive Word Filter
   if (groupSettings.abusiveFilter && !isSenderAdmin) {
-    const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|chutiya|chutiye|lund|gandu|saala|harami|mkl|kuta|kutta|chut|randi|suar|kamine|gaali|bhosdike|bhosda|bhosadi|bhosdika|loda|lauda|mc\s+bc|bc\s+mc|gaand|gand)\b/i;
+    const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi)\b/i;
     let isAbusiveMsg = localAbusiveRegex.test(text);
 
     if (!isAbusiveMsg && ai.enabled && ai.keys && ai.keys.length > 0) {
@@ -763,7 +763,7 @@ aero.onMessage(async (msg) => {
           messages: [
             {
               role: "system",
-              content: "You are a content moderation assistant. Check if the user message contains any English, Hindi, or Hinglish slurs, profanity, abusive terms, sexual terms, vulgar expressions, short form gaalis (like bc, mc, bkl, etc.) or harassment. Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
+              content: "You are a content moderation assistant. Check if the user message contains severe Hinglish/Hindi gaalis (specifically mc, bc, madarchod, behnchod, bkl, bhosdike, bakchod, bakchodi, or extreme equivalents). Do NOT flag mild slang, casual teasing, common colloquial words, or light insults (such as chutiya, gandu, lund, gaand, saala, kutta, kamina, harami, etc.) as abusive. We want a relaxed filter that only flags extreme/severe profanity. Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
             },
             {
               role: "user",
