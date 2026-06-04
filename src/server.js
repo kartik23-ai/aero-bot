@@ -665,6 +665,11 @@ aero.onMessage(async (msg) => {
               return;
             }
             const targetId = targetMember.user?._id || targetMember.user?.id;
+            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+            if (isTargetAdmin) {
+              await aero.sendMessage(dockId, `❌ Cannot perform moderation actions (kick) on other admins or the group owner.`);
+              return;
+            }
             await aero.kickMember(dockId, targetId);
           } catch (err) {
             console.error(`[PlatformAction] Kick failed for @${targetUsername}:`, err.message);
@@ -685,6 +690,11 @@ aero.onMessage(async (msg) => {
               return;
             }
             const targetId = targetMember.user?._id || targetMember.user?.id;
+            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+            if (isTargetAdmin) {
+              await aero.sendMessage(dockId, `❌ Cannot perform moderation actions (ban) on other admins or the group owner.`);
+              return;
+            }
             await aero.banMember(dockId, targetId);
           } catch (err) {
             console.error(`[PlatformAction] Ban failed for @${targetUsername}:`, err.message);
@@ -727,7 +737,7 @@ aero.onMessage(async (msg) => {
 
   // 3. Abusive Word Filter
   if (groupSettings.abusiveFilter && !isSenderAdmin) {
-    const localAbusiveRegex = /\b(mc|bc|bhenchod|bhenchodd|madarchod|chutiya|chutiye|lund|gandu|saala|harami|bkl|mkl|kuta|kutta|chut|randi|suar|kamine|gaali)\b/i;
+    const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|chutiya|chutiye|lund|gandu|saala|harami|mkl|kuta|kutta|chut|randi|suar|kamine|gaali|bhosdike|bhosda|bhosadi|bhosdika|loda|lauda|mc\s+bc|bc\s+mc|gaand|gand)\b/i;
     let isAbusiveMsg = localAbusiveRegex.test(text);
 
     if (!isAbusiveMsg && ai.enabled && ai.keys && ai.keys.length > 0) {
@@ -913,7 +923,10 @@ aero.onMessage(async (msg) => {
               reply = `❌ User @${targetUsername} not found in this group.`;
             } else {
               const targetId = targetMember.user?._id || targetMember.user?.id;
-              if (cmdName === "warn") {
+              const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+              if (isTargetAdmin && cmdName === "warn") {
+                reply = `❌ Cannot perform moderation actions (warn) on other admins or the group owner.`;
+              } else if (cmdName === "warn") {
                 const reason = parts.slice(1).join(" ") || "No reason provided.";
                 if (!groupSettings.warnings[targetId]) {
                   groupSettings.warnings[targetId] = 0;
@@ -1002,20 +1015,38 @@ aero.onMessage(async (msg) => {
         if (recentMsgs.length < 3) {
           reply = "Not enough chat history available for a 1-day summary.";
         } else {
-          const textLogs = recentMsgs.map(m => m.text).join("\n");
           if (ai.enabled && ai.groq) {
-            try {
-              const summary = await ai.answer({
-                text: `Please generate a beautiful, concise summary of the last 24 hours of chat logs. Highlight key topics discussed, decisions made, and pending tasks in bullet points:\n\n${textLogs}`,
-                rules: groupSettings.rules,
-                role: "ADMIN",
-                language: "en"
-              });
-              reply = `📝 **AeroGroupGuard AI 1-Day Chat Summary**:\n\n${summary}`;
-            } catch (err) {
-              console.error("[AI Summary Command Error]:", err.message);
-              reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
+            const chunkSize = 35;
+            const chunks = [];
+            for (let i = 0; i < recentMsgs.length; i += chunkSize) {
+              chunks.push(recentMsgs.slice(i, i + chunkSize));
             }
+            
+            (async () => {
+              try {
+                for (let i = 0; i < chunks.length; i++) {
+                  const chunk = chunks[i];
+                  const textLogs = chunk.map(m => m.text).join("\n");
+                  const summary = await ai.answer({
+                    text: `Please generate a beautiful, detailed summary of this part of the chat logs. Highlight key topics discussed, decisions made, and pending tasks in bullet points:\n\n${textLogs}`,
+                    rules: groupSettings.rules,
+                    role: "ADMIN",
+                    language: "en"
+                  });
+                  
+                  const partReply = `📝 **AeroGroupGuard AI Chat Summary (Part ${i + 1}/${chunks.length})**:\n\n${summary}`;
+                  await aero.sendMessage(dockId, partReply);
+                  queueAssistantReply(dockId, partReply, "command_reply");
+                  
+                  // Small delay to prevent message rate-limiting
+                  await new Promise(r => setTimeout(r, 600));
+                }
+              } catch (err) {
+                console.error("[AI Summary Chunk Error]:", err.message);
+                await aero.sendMessage(dockId, `❌ Failed to generate full chat summary: ${err.message}`);
+              }
+            })();
+            reply = null;
           } else {
             reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
           }
@@ -1035,7 +1066,8 @@ aero.onMessage(async (msg) => {
           text: question,
           rules: groupSettings.rules,
           role: isSenderAdmin ? "ADMIN" : "USER",
-          language: "en"
+          language: "en",
+          senderName: senderName
         });
       } catch (err) {
         console.error("[AI] Error generating answer:", err.message);
@@ -1050,9 +1082,13 @@ aero.onMessage(async (msg) => {
 
   if (reply) {
     try {
-      console.log(`[AutoReply] Sending to dock ${dockId}: ${reply}`);
-      await aero.sendMessage(dockId, reply);
-      queueAssistantReply(dockId, reply, isMention ? "mention_reply" : "command_reply");
+      let finalReply = reply;
+      if (isMention && senderName && !finalReply.trim().startsWith("@")) {
+        finalReply = `@${senderName} ${finalReply}`;
+      }
+      console.log(`[AutoReply] Sending to dock ${dockId}: ${finalReply}`);
+      await aero.sendMessage(dockId, finalReply);
+      queueAssistantReply(dockId, finalReply, isMention ? "mention_reply" : "command_reply");
     } catch (err) {
       console.error("[AutoReply] Failed to send response:", err.message);
     }
@@ -1268,6 +1304,11 @@ async function webhook(req) {
               return;
             }
             const targetId = targetMember.user?._id || targetMember.user?.id;
+            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+            if (isTargetAdmin) {
+              await aero.sendMessage(webhookDockId, `❌ Cannot perform moderation actions (kick) on other admins or the group owner.`);
+              return;
+            }
             await aero.kickMember(webhookDockId, targetId);
           } catch (err) {
             console.error(`[PlatformAction] Webhook kick failed for @${targetUsername}:`, err.message);
@@ -1288,6 +1329,11 @@ async function webhook(req) {
               return;
             }
             const targetId = targetMember.user?._id || targetMember.user?.id;
+            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+            if (isTargetAdmin) {
+              await aero.sendMessage(webhookDockId, `❌ Cannot perform moderation actions (ban) on other admins or the group owner.`);
+              return;
+            }
             await aero.banMember(webhookDockId, targetId);
           } catch (err) {
             console.error(`[PlatformAction] Webhook ban failed for @${targetUsername}:`, err.message);
@@ -1322,12 +1368,17 @@ async function webhook(req) {
 
       if (question) {
         try {
+          const senderName = sender.username || sender.displayName || "User";
           reply = await ai.answer({
             text: question,
             rules: bot.config.rules,
             role: "USER",
-            language: "en"
+            language: "en",
+            senderName: senderName
           });
+          if (reply && !reply.trim().startsWith("@")) {
+            reply = `@${senderName} ${reply}`;
+          }
         } catch (err) {
           reply = "Sorry, I encountered an issue processing that query.";
         }
@@ -1502,20 +1553,31 @@ async function groupControlAction(req) {
             continue;
           }
 
-          const textLogs = msgs.map(m => {
+          const formattedMsgs = msgs.map(m => {
             const senderObj = m.senderId || m.sender;
             return `[${senderObj?.username || senderObj?.displayName || "user"}]: ${m.text}`;
-          }).join("\n");
-
-          const summary = await ai.answer({
-            text: `Please generate a beautiful, concise summary of the last 24 hours of chat logs. Highlight key topics discussed, decisions made, and pending tasks in bullet points:\n\n${textLogs}`,
-            rules: "Highlight key topics, decisions, and tasks from the chat history. Avoid mentioning bots or list of bot commands unless they were a major topic. Return key points only.",
-            role: "ADMIN",
-            language: "en"
           });
-          const summaryText = `📝 **AeroGroupGuard AI 1-Day Chat Summary**:\n\n${summary}`;
-          await aero.sendMessage(gid, summaryText);
-          output += `Group (${gid}): Summary generated and sent to chat:\n${summary}\n\n`;
+
+          const chunkSize = 35;
+          const chunks = [];
+          for (let i = 0; i < formattedMsgs.length; i += chunkSize) {
+            chunks.push(formattedMsgs.slice(i, i + chunkSize));
+          }
+
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const textLogs = chunk.join("\n");
+            const summary = await ai.answer({
+              text: `Please generate a beautiful, detailed summary of this part of the chat logs. Highlight key topics discussed, decisions made, and pending tasks in bullet points:\n\n${textLogs}`,
+              rules: "Highlight key topics, decisions, and tasks from the chat history. Avoid mentioning bots or list of bot commands unless they were a major topic. Return key points only.",
+              role: "ADMIN",
+              language: "en"
+            });
+            const summaryText = `📝 **AeroGroupGuard AI Chat Summary (Part ${i + 1}/${chunks.length})**:\n\n${summary}`;
+            await aero.sendMessage(gid, summaryText);
+            output += `Group (${gid}) Part ${i + 1}: Summary generated:\n${summary}\n\n`;
+            await new Promise(r => setTimeout(r, 600));
+          }
           successCount++;
         } else if (action === "mention_everyone") {
           const members = await aero.getMembers(gid);
