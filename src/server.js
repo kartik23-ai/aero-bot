@@ -62,6 +62,27 @@ if (serviceAccount) {
   console.log("[Firebase] Credentials not found. Using local JSON database.");
 }
 
+function formatAnnouncement(text, author) {
+  const dateStr = new Date().toLocaleDateString("en-US", { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  return `┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+   📡  A E R O   S Y S T E M   N O T I C E   
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+📣 OFFICIAL ANNOUNCEMENT & BROADCAST
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${text}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+👤 AUTHORIZED SIGNATORY: @${author}
+📅 RELEASE DATE: ${dateStr}
+🔒 Secure Production Verification • Aero Network`;
+}
+
 function loadGroupDb() {
   if (!groupDbCache) {
     const dbPath = path.join(__dirname, "..", "db", "group_database.json");
@@ -158,7 +179,55 @@ async function generateImageBase64(prompt) {
     console.error("[ImageGen] HF FLUX failed:", err.message);
   }
 
-  // 2. Try Hugging Face SDXL-Turbo (super fast, avoids black safety checker filter)
+  // 2. Try Hugging Face DreamShaper XL Turbo (extremely premium, no safety checker black block issue)
+  try {
+    console.log("[ImageGen] Trying Hugging Face DreamShaper XL...");
+    const hfUrl = "https://api-inference.huggingface.co/models/Lykon/dreamshaper-xl-v2-turbo";
+    const res = await axios.post(hfUrl, { inputs: prompt }, {
+      headers: {
+        "Authorization": `Bearer ${hfToken}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    
+    const contentType = res.headers["content-type"] || "";
+    if (res.status === 200 && contentType.startsWith("image/") && res.data.length > 500) {
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:${contentType};base64,${base64}`;
+    } else {
+      console.warn("[ImageGen] HF DreamShaper returned non-image or too small response:", contentType, res.data.length);
+    }
+  } catch (err) {
+    console.error("[ImageGen] HF DreamShaper failed:", err.message);
+  }
+
+  // 3. Try Hugging Face OpenJourney (very stable, no black image safety checker)
+  try {
+    console.log("[ImageGen] Trying Hugging Face OpenJourney...");
+    const hfUrl = "https://api-inference.huggingface.co/models/prompthero/openjourney";
+    const res = await axios.post(hfUrl, { inputs: prompt }, {
+      headers: {
+        "Authorization": `Bearer ${hfToken}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    
+    const contentType = res.headers["content-type"] || "";
+    if (res.status === 200 && contentType.startsWith("image/") && res.data.length > 500) {
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:${contentType};base64,${base64}`;
+    } else {
+      console.warn("[ImageGen] HF OpenJourney returned non-image or too small response:", contentType, res.data.length);
+    }
+  } catch (err) {
+    console.error("[ImageGen] HF OpenJourney failed:", err.message);
+  }
+
+  // 4. Try Hugging Face SDXL-Turbo (fast 1-step generator)
   try {
     console.log("[ImageGen] Trying Hugging Face SDXL-Turbo...");
     const hfUrl = "https://api-inference.huggingface.co/models/stabilityai/sdxl-turbo";
@@ -182,31 +251,7 @@ async function generateImageBase64(prompt) {
     console.error("[ImageGen] HF SDXL-Turbo failed:", err.message);
   }
 
-  // 3. Try Hugging Face Stable Diffusion v1.5 (extremely stable legacy fallback)
-  try {
-    console.log("[ImageGen] Trying Hugging Face Stable Diffusion v1.5...");
-    const hfUrl = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5";
-    const res = await axios.post(hfUrl, { inputs: prompt }, {
-      headers: {
-        "Authorization": `Bearer ${hfToken}`,
-        "Content-Type": "application/json"
-      },
-      responseType: "arraybuffer",
-      timeout: 20000
-    });
-    
-    const contentType = res.headers["content-type"] || "";
-    if (res.status === 200 && contentType.startsWith("image/") && res.data.length > 500) {
-      const base64 = Buffer.from(res.data).toString("base64");
-      return `data:${contentType};base64,${base64}`;
-    } else {
-      console.warn("[ImageGen] HF SD-v1.5 returned non-image or too small response:", contentType, res.data.length);
-    }
-  } catch (err) {
-    console.error("[ImageGen] HF SD-v1.5 failed:", err.message);
-  }
-
-  // 4. Try Pollinations AI with browser headers (backup 3)
+  // 5. Try Pollinations AI with browser headers (backup 4)
   try {
     console.log("[ImageGen] Trying Pollinations AI fallback with browser headers...");
     const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&private=true&feed=false`;
@@ -1058,9 +1103,6 @@ aero.onMessage(async (msg) => {
                 } else if (!argsText) {
                   reply = "Please specify the announcement message. E.g. /announce Hello everyone!";
                 } else {
-                  const divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-                  const dateStr = new Date().toLocaleDateString("en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-                  
                   let finalMessage = argsText;
                   if (argsText.includes("@everyone")) {
                     try {
@@ -1076,7 +1118,7 @@ aero.onMessage(async (msg) => {
                     }
                   }
                   
-                  const announceMsg = `${divider}\n📢  **AERO OFFICIAL ANNOUNCEMENT**  📢\n${divider}\n\n${finalMessage}\n\n${divider}\n👤 **Authorized by:** @${msg.sender?.username || "Owner"}\n📅 **Date:** ${dateStr}\n${divider}`;
+                  const announceMsg = formatAnnouncement(finalMessage, msg.sender?.username || "Owner");
                   
                   let successCount = 0;
                   let failedCount = 0;
@@ -1173,7 +1215,7 @@ aero.onMessage(async (msg) => {
             await aero.sendMessage(dockId, textContent, base64Uri);
           } catch (err) {
             console.error("[Draw Command Error]:", err.message);
-            await aero.sendMessage(dockId, `❌ Failed to generate or send image: ${err.message}`);
+            await aero.sendMessage(dockId, "❌ Failed to generate image. Please try again with a different prompt.");
           }
         })();
         reply = null;
@@ -1709,9 +1751,6 @@ async function sendManualMessage(req) {
       try {
         let messageToSend = rawMessage;
         if (isAnnouncement) {
-          const divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-          const dateStr = new Date().toLocaleDateString("en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-          
           let finalMessage = rawMessage;
           if (rawMessage.includes("@everyone")) {
             try {
@@ -1726,7 +1765,7 @@ async function sendManualMessage(req) {
               console.error(`[Portal Announce Mentions Error for ${gid}]:`, err.message);
             }
           }
-          messageToSend = `${divider}\n📢  **AERO OFFICIAL ANNOUNCEMENT**  📢\n${divider}\n\n${finalMessage}\n\n${divider}\n👤 **Authorized by:** @yamdut (Dashboard)\n📅 **Date:** ${dateStr}\n${divider}`;
+          messageToSend = formatAnnouncement(finalMessage, "yamdut (Dashboard)");
         }
         await aero.sendMessage(gid, messageToSend);
         sent++;
