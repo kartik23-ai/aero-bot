@@ -144,22 +144,25 @@ async function generateImageBase64(prompt) {
         "Content-Type": "application/json"
       },
       responseType: "arraybuffer",
-      timeout: 20000
+      timeout: 25000
     });
     
-    if (res.status === 200) {
+    const contentType = res.headers["content-type"] || "";
+    if (res.status === 200 && contentType.startsWith("image/") && res.data.length > 500) {
       const base64 = Buffer.from(res.data).toString("base64");
-      return `data:image/webp;base64,${base64}`;
+      return `data:${contentType};base64,${base64}`;
+    } else {
+      console.warn("[ImageGen] HF FLUX returned non-image or too small response:", contentType, res.data.length);
     }
   } catch (err) {
     console.error("[ImageGen] HF FLUX failed:", err.message);
   }
 
-  // 2. Try Hugging Face Stable Diffusion XL (backup 1)
+  // 2. Try Hugging Face SDXL-Turbo (super fast, avoids black safety checker filter)
   try {
-    console.log("[ImageGen] Trying Hugging Face Stable Diffusion XL...");
-    const sdUrl = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0";
-    const res = await axios.post(sdUrl, { inputs: prompt }, {
+    console.log("[ImageGen] Trying Hugging Face SDXL-Turbo...");
+    const hfUrl = "https://api-inference.huggingface.co/models/stabilityai/sdxl-turbo";
+    const res = await axios.post(hfUrl, { inputs: prompt }, {
       headers: {
         "Authorization": `Bearer ${hfToken}`,
         "Content-Type": "application/json"
@@ -168,15 +171,42 @@ async function generateImageBase64(prompt) {
       timeout: 20000
     });
     
-    if (res.status === 200) {
+    const contentType = res.headers["content-type"] || "";
+    if (res.status === 200 && contentType.startsWith("image/") && res.data.length > 500) {
       const base64 = Buffer.from(res.data).toString("base64");
-      return `data:image/jpeg;base64,${base64}`;
+      return `data:${contentType};base64,${base64}`;
+    } else {
+      console.warn("[ImageGen] HF SDXL-Turbo returned non-image or too small response:", contentType, res.data.length);
     }
   } catch (err) {
-    console.error("[ImageGen] HF SDXL failed:", err.message);
+    console.error("[ImageGen] HF SDXL-Turbo failed:", err.message);
   }
 
-  // 3. Try Pollinations AI with browser headers (backup 2)
+  // 3. Try Hugging Face Stable Diffusion v1.5 (extremely stable legacy fallback)
+  try {
+    console.log("[ImageGen] Trying Hugging Face Stable Diffusion v1.5...");
+    const hfUrl = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5";
+    const res = await axios.post(hfUrl, { inputs: prompt }, {
+      headers: {
+        "Authorization": `Bearer ${hfToken}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    
+    const contentType = res.headers["content-type"] || "";
+    if (res.status === 200 && contentType.startsWith("image/") && res.data.length > 500) {
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:${contentType};base64,${base64}`;
+    } else {
+      console.warn("[ImageGen] HF SD-v1.5 returned non-image or too small response:", contentType, res.data.length);
+    }
+  } catch (err) {
+    console.error("[ImageGen] HF SD-v1.5 failed:", err.message);
+  }
+
+  // 4. Try Pollinations AI with browser headers (backup 3)
   try {
     console.log("[ImageGen] Trying Pollinations AI fallback with browser headers...");
     const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&private=true&feed=false`;
@@ -188,9 +218,10 @@ async function generateImageBase64(prompt) {
       timeout: 20000
     });
     
-    if (res.status === 200) {
+    const contentType = res.headers["content-type"] || "image/jpeg";
+    if (res.status === 200 && res.data.length > 500) {
       const base64 = Buffer.from(res.data).toString("base64");
-      return `data:image/jpeg;base64,${base64}`;
+      return `data:${contentType};base64,${base64}`;
     }
   } catch (err) {
     console.error("[ImageGen] Pollinations fallback failed:", err.message);
