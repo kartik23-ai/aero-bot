@@ -72,6 +72,29 @@ test("supports user commands and keyword triggers", () => {
     bot.handleMessage({ text: "can someone call admin?", sender: { id: "user" } }, groupContext),
     "Admin attention needed: User requested admin attention."
   );
+  assert.equal(
+    bot.handleMessage({ text: "@xenonn hello there", sender: { id: "user" } }, groupContext),
+    null
+  );
+  assert.equal(
+    bot.handleMessage({ text: "@rules", sender: { id: "user" } }, groupContext),
+    null
+  );
+
+  // Test with prefix "@"
+  const botWithAtPrefix = new AeroGroupGuard({ ownerId: "owner", prefix: "@" });
+  assert.equal(
+    botWithAtPrefix.handleMessage({ text: "@rules", sender: { id: "user" } }, groupContext),
+    "Be respectful, no spam, and use commands responsibly."
+  );
+  assert.equal(
+    botWithAtPrefix.handleMessage({ text: "@xenonn hello there", sender: { id: "user" } }, groupContext),
+    null
+  );
+  assert.equal(
+    botWithAtPrefix.handleMessage({ text: "/rules", sender: { id: "user" } }, groupContext),
+    "Be respectful, no spam, and use commands responsibly."
+  );
 });
 
 test("activates on bot mention without slash command", () => {

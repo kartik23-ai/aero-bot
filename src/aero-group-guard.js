@@ -122,6 +122,17 @@ class AeroGroupGuard {
 
     if (commandMatch) {
       const cmdName = commandMatch[1].toLowerCase();
+      
+      // If the message starts with '@' (commonly used to tag other users),
+      // only treat it as a command if it's a known bot command or the bot's username.
+      if (trimmed.startsWith("@")) {
+        const botName = this.botMention.replace(/^@/, "").toLowerCase();
+        const isKnown = ADMIN_COMMANDS.has(cmdName) || USER_COMMANDS.has(cmdName) || cmdName === botName;
+        if (!isKnown) {
+          return null;
+        }
+      }
+
       const botName = this.botMention.replace(/^@/, "").toLowerCase();
       if (cmdName !== botName) {
         return {
