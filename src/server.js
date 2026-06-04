@@ -516,6 +516,10 @@ aero.onMessage(async (msg) => {
   // System join message auto welcome
   if (msg.isSystemMessage && msg.systemMessageType === "MEMBER_JOINED") {
     console.log(`[SystemMessage] Member joined Aero: ${senderName} (${senderId}) in dock ${dockId}`);
+    if (aero._membersCache) {
+      aero._membersCache.delete(dockId);
+      console.log(`[Cache] Cleared members cache for dock ${dockId} due to member join.`);
+    }
     if (assistantMode.autoWelcome && isGroup) {
       const groupSettings = getGroupSettings(db, dockId);
       const welcomeContext = {
@@ -1741,6 +1745,10 @@ async function webhook(req) {
   };
 
   if (eventType === "member_join") {
+    if (aero._membersCache) {
+      aero._membersCache.delete(webhookDockId);
+      console.log(`[Cache] Cleared members cache for dock ${webhookDockId} due to webhook member join.`);
+    }
     const welcome = assistantMode.autoWelcome ? bot.handleMemberJoin(sender, context) : null;
     return json(200, {
       eventType,

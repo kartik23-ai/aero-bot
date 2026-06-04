@@ -298,7 +298,7 @@ class AeroAPI {
     const now = Date.now();
     if (!forceRefresh) {
       const cached = this._membersCache.get(dockId);
-      if (cached && (now - cached.timestamp < 60000)) {
+      if (cached && (now - cached.timestamp < 900000)) {
         return cached.data;
       }
     }
@@ -310,6 +310,14 @@ class AeroAPI {
         const data = await this._get(`/docks/${dockId}/members`);
         this._membersCache.set(dockId, { data, timestamp: Date.now() });
         return data;
+      } catch (err) {
+        console.error(`[AeroAPI] Failed to fetch members for ${dockId}:`, err.message);
+        const cached = this._membersCache.get(dockId);
+        if (cached) {
+          console.log(`[AeroAPI] Returning stale member cache for ${dockId} as fallback.`);
+          return cached.data;
+        }
+        throw err;
       } finally {
         this._pendingMembers.delete(dockId);
       }
