@@ -608,7 +608,49 @@ aero.onMessage(async (msg) => {
     groupName,
     adminIds,
     chatHistory,
-    assistantOnly: assistantMode.nonDestructiveOnly
+    assistantOnly: assistantMode.nonDestructiveOnly,
+    platformActions: {
+      kick: (payload) => {
+        const targetUsername = (payload.target || "").replace(/^@/, "").trim().toLowerCase();
+        if (!targetUsername) return;
+        (async () => {
+          try {
+            const membersRes = await aero.getMembers(dockId);
+            const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+            const targetMember = members.find(m => m.user?.username?.toLowerCase() === targetUsername);
+            if (!targetMember) {
+              await aero.sendMessage(dockId, `❌ Cannot kick @${targetUsername}: User not found in this group.`);
+              return;
+            }
+            const targetId = targetMember.user?._id || targetMember.user?.id;
+            await aero.kickMember(dockId, targetId);
+          } catch (err) {
+            console.error(`[PlatformAction] Kick failed for @${targetUsername}:`, err.message);
+            await aero.sendMessage(dockId, `❌ Kick failed for @${targetUsername}: ${err.message}`);
+          }
+        })();
+      },
+      ban: (payload) => {
+        const targetUsername = (payload.target || "").replace(/^@/, "").trim().toLowerCase();
+        if (!targetUsername) return;
+        (async () => {
+          try {
+            const membersRes = await aero.getMembers(dockId);
+            const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+            const targetMember = members.find(m => m.user?.username?.toLowerCase() === targetUsername);
+            if (!targetMember) {
+              await aero.sendMessage(dockId, `❌ Cannot ban @${targetUsername}: User not found in this group.`);
+              return;
+            }
+            const targetId = targetMember.user?._id || targetMember.user?.id;
+            await aero.banMember(dockId, targetId);
+          } catch (err) {
+            console.error(`[PlatformAction] Ban failed for @${targetUsername}:`, err.message);
+            await aero.sendMessage(dockId, `❌ Ban failed for @${targetUsername}: ${err.message}`);
+          }
+        })();
+      }
+    }
   };
 
   const parsedCmd = bot.parseCommand(text);
@@ -1162,13 +1204,56 @@ async function webhook(req) {
   const eventType = body.eventType || body.type || "message";
   const text = sanitizeText(body.text);
   const sender = body.member || body.sender || { id: "unknown" };
+  const webhookDockId = body.groupId || "unknown";
   const context = {
     enabled: body.enabled !== false,
     isGroup: true,
     groupName: body.groupName,
     adminIds: body.adminIds || [],
     chatHistory: body.chatHistory || [],
-    assistantOnly: assistantMode.nonDestructiveOnly
+    assistantOnly: assistantMode.nonDestructiveOnly,
+    platformActions: {
+      kick: (payload) => {
+        const targetUsername = (payload.target || "").replace(/^@/, "").trim().toLowerCase();
+        if (!targetUsername || webhookDockId === "unknown") return;
+        (async () => {
+          try {
+            const membersRes = await aero.getMembers(webhookDockId);
+            const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+            const targetMember = members.find(m => m.user?.username?.toLowerCase() === targetUsername);
+            if (!targetMember) {
+              await aero.sendMessage(webhookDockId, `❌ Cannot kick @${targetUsername}: User not found in this group.`);
+              return;
+            }
+            const targetId = targetMember.user?._id || targetMember.user?.id;
+            await aero.kickMember(webhookDockId, targetId);
+          } catch (err) {
+            console.error(`[PlatformAction] Webhook kick failed for @${targetUsername}:`, err.message);
+            await aero.sendMessage(webhookDockId, `❌ Kick failed for @${targetUsername}: ${err.message}`);
+          }
+        })();
+      },
+      ban: (payload) => {
+        const targetUsername = (payload.target || "").replace(/^@/, "").trim().toLowerCase();
+        if (!targetUsername || webhookDockId === "unknown") return;
+        (async () => {
+          try {
+            const membersRes = await aero.getMembers(webhookDockId);
+            const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+            const targetMember = members.find(m => m.user?.username?.toLowerCase() === targetUsername);
+            if (!targetMember) {
+              await aero.sendMessage(webhookDockId, `❌ Cannot ban @${targetUsername}: User not found in this group.`);
+              return;
+            }
+            const targetId = targetMember.user?._id || targetMember.user?.id;
+            await aero.banMember(webhookDockId, targetId);
+          } catch (err) {
+            console.error(`[PlatformAction] Webhook ban failed for @${targetUsername}:`, err.message);
+            await aero.sendMessage(webhookDockId, `❌ Ban failed for @${targetUsername}: ${err.message}`);
+          }
+        })();
+      }
+    }
   };
 
   if (eventType === "member_join") {
