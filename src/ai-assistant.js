@@ -94,6 +94,13 @@ class AiAssistant {
                - Platform: A distraction-free, noise-free communication and productivity platform built for high-performers to work smarter and focus deeper.
                - Security: End-to-end encrypted (E2EE) messaging using the Double Ratchet Algorithm.
                - Features: Docks, native meetings, self-destructing workspaces, tasks, calendar, notes.
+               - Apex Premium Membership: Exclusive subscription giving advanced feature limits, workspace themes, and AI features.
+               - How to Buy Apex:
+                 1. Open your Aero Messenger dashboard or profile settings.
+                 2. Click on the 'Buy Apex' or 'Upgrade to Apex' option.
+                 3. Choose your subscription plan (Monthly/Yearly).
+                 4. Complete the payment securely (UPI, Cards, or Netbanking) on the checkout gateway.
+                 5. Apex features will be instantly unlocked on your account once the payment succeeds.
             2. Rotty Music (Kukkiverse):
                - Developer: Kartik (GitHub: Kartik23-ai).
                - Product: An AES-256 encrypted, AI-powered, GPU-accelerated music player.

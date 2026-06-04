@@ -802,24 +802,28 @@ aero.onMessage(async (msg) => {
 
   const canEdit = isSenderOwner || isSenderAdmin;
 
-  // Fetch chat history for summaries
-  let chatHistory = [];
-  try {
-    const msgs = await aero.getMessagesDays(dockId, 1);
-    chatHistory = msgs.map(m => {
-      const sObj = m.senderId || m.sender;
-      return {
-        timestamp: m.createdAt || m.updatedAt || new Date().toISOString(),
-        text: `[${sObj?.username || "user"}]: ${m.text}`
-      };
-    });
-  } catch (err) {
-    console.error("[Enforcer] Failed to fetch chat history:", err.message);
-  }
-
   const botMentionText = bot.botMention.toLowerCase();
   const lowerText = text.toLowerCase();
   const isMention = lowerText.includes(botMentionText);
+
+  // Fetch chat history for summaries (only on mention or summary command)
+  let chatHistory = [];
+  const isSummaryCmd = parsedCmd && ["summary", "weeklysummary", "chatrecap", "recap"].includes(parsedCmd.name);
+  
+  if (isMention || isSummaryCmd) {
+    try {
+      const msgs = await aero.getMessagesDays(dockId, 1);
+      chatHistory = msgs.map(m => {
+        const sObj = m.senderId || m.sender;
+        return {
+          timestamp: m.createdAt || m.updatedAt || new Date().toISOString(),
+          text: `[${sObj?.username || "user"}]: ${m.text}`
+        };
+      });
+    } catch (err) {
+      console.error("[Enforcer] Failed to fetch chat history:", err.message);
+    }
+  }
 
   const context = {
     enabled: assistantMode.enabled,

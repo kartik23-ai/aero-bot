@@ -284,10 +284,22 @@ class AeroAPI {
   }
 
   /**
-   * Fetch members of a dock
+   * Fetch members of a dock with a 30-second caching mechanism to optimize CPU/Network
    */
-  async getMembers(dockId) {
-    return await this._get(`/docks/${dockId}/members`);
+  async getMembers(dockId, forceRefresh = false) {
+    if (!this._membersCache) {
+      this._membersCache = new Map();
+    }
+    const now = Date.now();
+    if (!forceRefresh) {
+      const cached = this._membersCache.get(dockId);
+      if (cached && (now - cached.timestamp < 30000)) {
+        return cached.data;
+      }
+    }
+    const data = await this._get(`/docks/${dockId}/members`);
+    this._membersCache.set(dockId, { data, timestamp: now });
+    return data;
   }
 
   /**
