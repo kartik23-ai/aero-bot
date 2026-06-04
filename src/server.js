@@ -20,6 +20,7 @@ const ai = new AiAssistant({ model: config.aiModel });
 // Initialize Firebase connection if key exists
 let firestoreDb = null;
 let groupDbCache = null;
+let sessionCache = null;
 let serviceAccount = null;
 const firebaseKeyPath = path.join(__dirname, "..", "db", "firebase_key.json");
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
@@ -116,6 +117,7 @@ function getGroupSettings(db, dockId) {
 
 // Session Persistence Bypasses
 function saveSession(sessionData) {
+  sessionCache = sessionData;
   const sessionPath = path.join(__dirname, "..", "db", "session.json");
   try {
     if (sessionData === null) {
@@ -124,18 +126,33 @@ function saveSession(sessionData) {
       fs.writeFileSync(sessionPath, JSON.stringify(sessionData, null, 2), "utf-8");
     }
   } catch (e) {
-    console.error("Failed to save session:", e.message);
+    console.error("Failed to save session locally:", e.message);
+  }
+  
+  if (firestoreDb) {
+    if (sessionData === null) {
+      firestoreDb.collection("settings").doc("session").delete()
+        .then(() => console.log("[Firestore] Saved session cleared from cloud."))
+        .catch(err => console.error("[Firestore] Failed to clear session from cloud:", err.message));
+    } else {
+      firestoreDb.collection("settings").doc("session").set(sessionData)
+        .then(() => console.log("[Firestore] Saved session successfully synced to cloud."))
+        .catch(err => console.error("[Firestore] Failed to sync session to cloud:", err.message));
+    }
   }
 }
 
 function loadSession() {
+  if (sessionCache) {
+    return sessionCache;
+  }
   const sessionPath = path.join(__dirname, "..", "db", "session.json");
   try {
     if (fs.existsSync(sessionPath)) {
       return JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
     }
   } catch (e) {
-    console.error("Failed to load session:", e.message);
+    console.error("Failed to load session locally:", e.message);
   }
   return null;
 }
@@ -1156,6 +1173,15 @@ if (require.main === module) {
           console.log("[Firestore] Database successfully loaded on startup.");
         } else {
           console.log("[Firestore] No database found in cloud, will create one on first write.");
+        }
+        
+        console.log("[Firestore] Fetching saved session on startup...");
+        const sessDoc = await firestoreDb.collection("settings").doc("session").get();
+        if (sessDoc.exists) {
+          sessionCache = sessDoc.data();
+          console.log("[Firestore] Saved session successfully loaded on startup.");
+        } else {
+          console.log("[Firestore] No saved session found in cloud.");
         }
       } catch (err) {
         console.error("[Firestore] Startup fetch failed:", err.message);
