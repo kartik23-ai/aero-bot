@@ -128,6 +128,41 @@ test("webhook auto-replies to mention commands", async () => {
   }
 });
 
+test("custom commands execute via webhook", async () => {
+  const { baseUrl, close } = await startServer();
+  try {
+    const saveResponse = await fetch(`${baseUrl}/api/custom-commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: { id: "owner-1", role: "OWNER" },
+        name: "/apply",
+        response: "Apply using the pinned form.",
+        languages: ["en"]
+      })
+    });
+    assert.equal(saveResponse.status, 201);
+
+    const webhookResponse = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        groupName: "Aero Community",
+        text: "/apply",
+        sender: { id: "user-201" }
+      })
+    });
+    const webhookBody = await webhookResponse.json();
+
+    assert.equal(webhookResponse.status, 200);
+    assert.equal(webhookBody.reply, "Apply using the pinned form.");
+  } finally {
+    await close();
+  }
+});
+
 function startServer() {
   return new Promise((resolve) => {
     const listener = server.listen(0, () => {

@@ -1,5 +1,13 @@
 "use strict";
 
+process.on("uncaughtException", (err) => {
+  console.error("[CRITICAL] Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[CRITICAL] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -66,6 +74,10 @@ function loadGroupDb() {
     }
     if (!groupDbCache) {
       groupDbCache = { groups: {}, approvedUsers: ["owner-1"], pendingUsers: [] };
+    }
+    if (groupDbCache.customCommands && Array.isArray(groupDbCache.customCommands)) {
+      customCommands.length = 0;
+      customCommands.push(...groupDbCache.customCommands);
     }
   }
   return groupDbCache;
@@ -1232,7 +1244,15 @@ aero.onMessage(async (msg) => {
         }
       }
     } else {
-      reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
+      const matchingCommand = customCommands.find(c => {
+        const normName = c.name.replace(/^\//, "").toLowerCase();
+        return normName === cmdName;
+      });
+      if (matchingCommand) {
+        reply = matchingCommand.response;
+      } else {
+        reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
+      }
     }
   } else if (isMention) {
     const escapedMention = bot.botMention.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1333,6 +1353,10 @@ if (require.main === module) {
         if (doc.exists) {
           groupDbCache = doc.data();
           console.log("[Firestore] Database successfully loaded on startup.");
+          if (groupDbCache.customCommands && Array.isArray(groupDbCache.customCommands)) {
+            customCommands.length = 0;
+            customCommands.push(...groupDbCache.customCommands);
+          }
         } else {
           console.log("[Firestore] No database found in cloud, will create one on first write.");
         }
@@ -1574,7 +1598,19 @@ async function webhook(req) {
         reply = "Haan ji? Boliye, main aapki kya madad kar sakta hoon?";
       }
     } else {
-      reply = bot.handleMessage({ text, sender: { id: sender.id || sender._id || "unknown" } }, context);
+      if (parsedCmd) {
+        const cmdName = parsedCmd.name;
+        const matchingCommand = customCommands.find(c => {
+          const normName = c.name.replace(/^\//, "").toLowerCase();
+          return normName === cmdName;
+        });
+        if (matchingCommand) {
+          reply = matchingCommand.response;
+        }
+      }
+      if (!reply) {
+        reply = bot.handleMessage({ text, sender: { id: sender.id || sender._id || "unknown" } }, context);
+      }
     }
 
     if (reply) {
@@ -1917,6 +1953,12 @@ async function saveCustomCommand(req) {
     attachments: Array.isArray(body.attachments) ? body.attachments : []
   };
   customCommands.push(command);
+  
+  // Sync to Firestore and local fallback database
+  const db = loadGroupDb();
+  db.customCommands = customCommands;
+  saveGroupDb(db);
+
   audit("custom_command_saved", body.actor, [], { command: command.name });
   return json(201, { command });
 }
