@@ -513,13 +513,16 @@ aero.onMessage(async (msg) => {
   // Determine if it is a Group or DM (Direct Message)
   const isGroup = targetDock && (targetDock.type === "group" || targetDock.members > 2);
 
+  if (msg.isSystemMessage) {
+    if (aero._membersCache) {
+      aero._membersCache.delete(dockId);
+      console.log(`[Cache] Cleared members cache for dock ${dockId} due to system message: ${msg.systemMessageType}`);
+    }
+  }
+
   // System join message auto welcome
   if (msg.isSystemMessage && msg.systemMessageType === "MEMBER_JOINED") {
     console.log(`[SystemMessage] Member joined Aero: ${senderName} (${senderId}) in dock ${dockId}`);
-    if (aero._membersCache) {
-      aero._membersCache.delete(dockId);
-      console.log(`[Cache] Cleared members cache for dock ${dockId} due to member join.`);
-    }
     if (assistantMode.autoWelcome && isGroup) {
       const groupSettings = getGroupSettings(db, dockId);
       const welcomeContext = {
@@ -1744,17 +1747,19 @@ async function webhook(req) {
     }
   };
 
-  if (eventType === "member_join") {
+  if (eventType === "member_join" || eventType === "member_leave" || eventType === "member_left" || eventType === "role_change") {
     if (aero._membersCache) {
       aero._membersCache.delete(webhookDockId);
-      console.log(`[Cache] Cleared members cache for dock ${webhookDockId} due to webhook member join.`);
+      console.log(`[Cache] Cleared members cache for dock ${webhookDockId} due to webhook event: ${eventType}`);
     }
-    const welcome = assistantMode.autoWelcome ? bot.handleMemberJoin(sender, context) : null;
-    return json(200, {
-      eventType,
-      reply: welcome,
-      sendAction: { status: "queued_for_auto_send", reason: "welcome" }
-    });
+    if (eventType === "member_join") {
+      const welcome = assistantMode.autoWelcome ? bot.handleMemberJoin(sender, context) : null;
+      return json(200, {
+        eventType,
+        reply: welcome,
+        sendAction: { status: "queued_for_auto_send", reason: "welcome" }
+      });
+    }
   }
 
   if (eventType === "message" || eventType === "newMessage") {
