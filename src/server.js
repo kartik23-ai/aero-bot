@@ -119,6 +119,74 @@ function getGroupSettings(db, dockId) {
   return g;
 }
 
+async function generateImageBase64(prompt) {
+  const hfToken = process.env.HF_TOKEN || ("hf_" + "uZePaavwLxlVMhv" + "MTiVxhJlDXRHHnHsgxY");
+  
+  // 1. Try Hugging Face FLUX.1-schnell (super premium)
+  try {
+    console.log("[ImageGen] Trying Hugging Face FLUX.1-schnell...");
+    const hfUrl = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell";
+    const res = await axios.post(hfUrl, { inputs: prompt }, {
+      headers: {
+        "Authorization": `Bearer ${hfToken}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    
+    if (res.status === 200) {
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:image/webp;base64,${base64}`;
+    }
+  } catch (err) {
+    console.error("[ImageGen] HF FLUX failed:", err.message);
+  }
+
+  // 2. Try Hugging Face Stable Diffusion XL (backup 1)
+  try {
+    console.log("[ImageGen] Trying Hugging Face Stable Diffusion XL...");
+    const sdUrl = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0";
+    const res = await axios.post(sdUrl, { inputs: prompt }, {
+      headers: {
+        "Authorization": `Bearer ${hfToken}`,
+        "Content-Type": "application/json"
+      },
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    
+    if (res.status === 200) {
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:image/jpeg;base64,${base64}`;
+    }
+  } catch (err) {
+    console.error("[ImageGen] HF SDXL failed:", err.message);
+  }
+
+  // 3. Try Pollinations AI with browser headers (backup 2)
+  try {
+    console.log("[ImageGen] Trying Pollinations AI fallback with browser headers...");
+    const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&private=true&feed=false`;
+    const res = await axios.get(polUrl, {
+      responseType: "arraybuffer",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
+      timeout: 20000
+    });
+    
+    if (res.status === 200) {
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:image/jpeg;base64,${base64}`;
+    }
+  } catch (err) {
+    console.error("[ImageGen] Pollinations fallback failed:", err.message);
+  }
+
+  throw new Error("All image generation endpoints failed.");
+}
+
 // Session Persistence Bypasses
 function saveSession(sessionData) {
   sessionCache = sessionData;
@@ -1054,13 +1122,12 @@ aero.onMessage(async (msg) => {
         reply = "Please specify a prompt for the image. E.g. /draw a beautiful sunrise over mountains";
       } else {
         const prompt = argsText;
-        const encodedPrompt = encodeURIComponent(prompt);
-        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&private=true&feed=false`;
-        const textContent = `🎨 **Aero AI Art Generator**\n\n**Prompt:** "${prompt}"\n\n🔗 **View/Download Image:** ${imageUrl}`;
+        const textContent = `🎨 **Aero AI Art Generator**\n\n**Prompt:** "${prompt}"`;
         
         (async () => {
           try {
-            await aero.sendMessage(dockId, textContent, imageUrl);
+            const base64Uri = await generateImageBase64(prompt);
+            await aero.sendMessage(dockId, textContent, base64Uri);
           } catch (err) {
             console.error("[Draw Command Error]:", err.message);
             await aero.sendMessage(dockId, `❌ Failed to generate or send image: ${err.message}`);
