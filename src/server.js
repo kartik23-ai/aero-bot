@@ -2518,29 +2518,38 @@ function queueAssistantReply(groupId, text, reason) {
   return action;
 }
 
+let chatsCache = null;
+
 function saveMessageToFile(dockId, message) {
   const dbDir = path.join(__dirname, "..", "db");
   const filePath = path.join(dbDir, "chats.json");
   try {
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
-    let data = {};
-    if (fs.existsSync(filePath)) {
-      try {
-        data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      } catch (e) {
-        data = {};
+    if (!chatsCache) {
+      if (fs.existsSync(filePath)) {
+        try {
+          chatsCache = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        } catch (e) {
+          chatsCache = {};
+        }
+      } else {
+        chatsCache = {};
       }
     }
-    if (!data[dockId]) {
-      data[dockId] = [];
+    
+    if (!chatsCache[dockId]) {
+      chatsCache[dockId] = [];
     }
-    data[dockId].push(message);
-    if (data[dockId].length > 1000) {
-      data[dockId].shift();
+    chatsCache[dockId].push(message);
+    if (chatsCache[dockId].length > 1000) {
+      chatsCache[dockId].shift();
     }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    
+    // Asynchronous background write to prevent blocking the Event Loop
+    fs.writeFile(filePath, JSON.stringify(chatsCache, null, 2), "utf-8", (err) => {
+      if (err) {
+        console.error("[Storage Error] Failed to write chats to disk:", err.message);
+      }
+    });
   } catch (err) {
     console.error("[Storage Error] Failed to save message:", err.message);
   }
