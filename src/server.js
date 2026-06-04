@@ -459,7 +459,17 @@ aero.onMessage(async (msg) => {
       // Try joining group
       try {
         console.log(`[DM Setup] Invoking join for code: ${inviteCode}`);
-        const joinRes = await aero.joinDock(inviteCode);
+        let joinRes = null;
+        try {
+          joinRes = await aero.joinDock(inviteCode);
+        } catch (joinErr) {
+          console.warn(`[DM Setup] joinDock API request failed: ${joinErr.message}. Attempting fallback checks.`);
+          try {
+            await aero.fetchDocks();
+          } catch (fetchErr) {
+            console.error(`[DM Setup] Fallback fetchDocks failed:`, fetchErr.message);
+          }
+        }
         
         let newDockId = joinRes?.dock?._id || joinRes?.dock?.id || joinRes?._id || joinRes?.id;
         if (!newDockId && typeof joinRes?.dock === "string") {
