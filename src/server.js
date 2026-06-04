@@ -101,7 +101,9 @@ function getGroupSettings(db, dockId) {
       abusiveFilter: false,
       allowAdminsToEdit: false,
       language: "english",
-      warnings: {}
+      warnings: {},
+      faq: null,
+      groupName: null
     };
   }
   const g = db.groups[dockId];
@@ -112,6 +114,8 @@ function getGroupSettings(db, dockId) {
   if (g.allowAdminsToEdit === undefined) g.allowAdminsToEdit = false;
   if (g.language === undefined) g.language = "english";
   if (g.warnings === undefined) g.warnings = {};
+  if (g.faq === undefined) g.faq = null;
+  if (g.groupName === undefined) g.groupName = null;
   return g;
 }
 
@@ -813,8 +817,8 @@ aero.onMessage(async (msg) => {
     const cmdName = parsedCmd.name;
     const argsText = parsedCmd.argsText || "";
 
-    if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns"].includes(cmdName)) {
-      if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive"].includes(cmdName)) {
+    if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq"].includes(cmdName)) {
+      if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "rename", "announce", "setfaq"].includes(cmdName)) {
         if (!canEdit) {
           reply = "Permission denied. Only dock owner (or authorized admins) can change settings.";
         } else {
@@ -911,6 +915,76 @@ aero.onMessage(async (msg) => {
                 }
               }
               break;
+            case "rename":
+              if (!argsText) {
+                reply = "Please specify the new dock name. E.g. /rename New Name";
+              } else {
+                try {
+                  await aero.renameDock(dockId, argsText);
+                  groupSettings.groupName = argsText;
+                  saveGroupDb(db);
+                  await aero.fetchDocks();
+                  reply = `✅ Dock has been successfully renamed to "${argsText}".`;
+                } catch (err) {
+                  reply = `❌ Failed to rename dock on Aero server: ${err.message}`;
+                }
+              }
+              break;
+            case "setfaq":
+              if (!argsText) {
+                reply = "Please specify FAQ text. E.g. /setfaq Here is the FAQ content";
+              } else {
+                groupSettings.faq = argsText;
+                saveGroupDb(db);
+                reply = "✅ FAQ updated for this group.";
+              }
+              break;
+            case "announce":
+              {
+                const senderUsername = (msg.sender?.username || "").toLowerCase();
+                if (senderUsername !== "yamdut" && senderUsername !== "aryankaushik") {
+                  reply = "❌ Permission denied. Announcements can only be made by @yamdut or @aryankaushik.";
+                } else if (!argsText) {
+                  reply = "Please specify the announcement message. E.g. /announce Hello everyone!";
+                } else {
+                  const divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+                  const dateStr = new Date().toLocaleDateString("en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                  
+                  let finalMessage = argsText;
+                  if (argsText.includes("@everyone")) {
+                    try {
+                      const membersRes = await aero.getMembers(dockId);
+                      const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+                      const mentionsList = members.map(m => m.username || m.user?.username || m.displayName || m.user?.displayName).filter(Boolean);
+                      if (mentionsList.length > 0) {
+                        const cleanedText = argsText.replace(/@everyone/g, "").trim();
+                        finalMessage = `${cleanedText}\n\n🔔 Mentions: ${mentionsList.map(name => `@${name}`).join(" ")}`;
+                      }
+                    } catch (err) {
+                      console.error("[Announce Mentions Error]:", err.message);
+                    }
+                  }
+                  
+                  const announceMsg = `${divider}\n📢  **AERO OFFICIAL ANNOUNCEMENT**  📢\n${divider}\n\n${finalMessage}\n\n${divider}\n👤 **Authorized by:** @${msg.sender?.username || "Owner"}\n📅 **Date:** ${dateStr}\n${divider}`;
+                  
+                  let successCount = 0;
+                  let failedCount = 0;
+                  if (aero.connected && Array.isArray(aero.docks)) {
+                    for (const d of aero.docks) {
+                      try {
+                        await aero.sendMessage(d.id, announceMsg);
+                        successCount++;
+                      } catch (e) {
+                        console.error(`Failed to send announcement to dock ${d.id}:`, e.message);
+                        failedCount++;
+                      }
+                    }
+                  }
+                  
+                  reply = `✅ Announcement broadcasted to ${successCount} group(s)${failedCount > 0 ? ` (failed on ${failedCount} group(s))` : ""}.`;
+                }
+              }
+              break;
           }
         }
       } else if (cmdName === "toggleadmin") {
@@ -973,6 +1047,27 @@ aero.onMessage(async (msg) => {
       }
     } else if (cmdName === "rules") {
       reply = groupSettings.rules;
+    } else if (cmdName === "faq") {
+      reply = groupSettings.faq || bot.faq;
+    } else if (cmdName === "draw") {
+      if (!argsText) {
+        reply = "Please specify a prompt for the image. E.g. /draw a beautiful sunrise over mountains";
+      } else {
+        const prompt = argsText;
+        const encodedPrompt = encodeURIComponent(prompt);
+        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true&private=true&feed=false`;
+        const textContent = `🎨 **Aero AI Art Generator**\n\n**Prompt:** "${prompt}"\n\n🔗 **View/Download Image:** ${imageUrl}`;
+        
+        (async () => {
+          try {
+            await aero.sendMessage(dockId, textContent, imageUrl);
+          } catch (err) {
+            console.error("[Draw Command Error]:", err.message);
+            await aero.sendMessage(dockId, `❌ Failed to generate or send image: ${err.message}`);
+          }
+        })();
+        reply = null;
+      }
     } else if (cmdName === "status") {
       reply = `Group Status: Rules: ${groupSettings.rules.substring(0, 30)}..., Lock: ${groupSettings.locked ? "locked" : "unlocked"}, Slowmode: ${groupSettings.slowmodeSeconds > 0 ? groupSettings.slowmodeSeconds + "s" : "disabled"}, Abusive filter: ${groupSettings.abusiveFilter ? "enabled" : "disabled"}, Admins allowed to edit: ${groupSettings.allowAdminsToEdit ? "yes" : "no"}, Warnings logged: ${Object.keys(groupSettings.warnings).length}`;
     } else if (cmdName === "report") {
@@ -1469,7 +1564,8 @@ async function sendManualMessage(req) {
     return json(403, { error: "Permission denied." });
   }
   const groupIds = normalizeGroupTargets(body.groupIds);
-  const message = sanitizeText(body.message, 2000);
+  const rawMessage = sanitizeText(body.message, 2000);
+  const isAnnouncement = !!body.isAnnouncement;
   
   let sent = 0;
   let failed = 0;
@@ -1477,7 +1573,28 @@ async function sendManualMessage(req) {
   if (aero.connected) {
     for (const gid of groupIds) {
       try {
-        await aero.sendMessage(gid, message);
+        let messageToSend = rawMessage;
+        if (isAnnouncement) {
+          const divider = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+          const dateStr = new Date().toLocaleDateString("en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+          
+          let finalMessage = rawMessage;
+          if (rawMessage.includes("@everyone")) {
+            try {
+              const membersRes = await aero.getMembers(gid);
+              const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+              const mentionsList = members.map(m => m.username || m.user?.username || m.displayName || m.user?.displayName).filter(Boolean);
+              if (mentionsList.length > 0) {
+                const cleanedText = rawMessage.replace(/@everyone/g, "").trim();
+                finalMessage = `${cleanedText}\n\n🔔 Mentions: ${mentionsList.map(name => `@${name}`).join(" ")}`;
+              }
+            } catch (err) {
+              console.error(`[Portal Announce Mentions Error for ${gid}]:`, err.message);
+            }
+          }
+          messageToSend = `${divider}\n📢  **AERO OFFICIAL ANNOUNCEMENT**  📢\n${divider}\n\n${finalMessage}\n\n${divider}\n👤 **Authorized by:** @yamdut (Dashboard)\n📅 **Date:** ${dateStr}\n${divider}`;
+        }
+        await aero.sendMessage(gid, messageToSend);
         sent++;
       } catch (err) {
         console.error(`Failed to send message to group ${gid}:`, err.message);
@@ -1487,8 +1604,8 @@ async function sendManualMessage(req) {
   }
 
   const result = { sent, failed, groups: groupIds };
-  audit("manual_message_sent", body.actor, groupIds, { messageLength: message.length, result });
-  events.push({ type: "manual_message", userId: body.actor?.id, text: `[Dashboard Broadcast]: ${message}`, timestamp: new Date().toISOString() });
+  audit("manual_message_sent", body.actor, groupIds, { messageLength: rawMessage.length, result });
+  events.push({ type: "manual_message", userId: body.actor?.id, text: `[Dashboard Broadcast]: ${rawMessage}`, timestamp: new Date().toISOString() });
   return json(200, { result });
 }
 

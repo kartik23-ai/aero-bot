@@ -206,8 +206,18 @@
           <div class="control-grid">
             <form id="manualMessageForm" class="control-card">
               <h3>Custom Message System</h3>
-              <label>Target Groups
+              <label>Target Mode
+                <select id="targetMode">
+                  <option value="selected" selected>Selected Groups</option>
+                  <option value="all">All Groups</option>
+                </select>
+              </label>
+              <label id="messageGroupsLabel">Target Groups
                 <select id="messageGroups" multiple></select>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px; margin-bottom: 12px; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="formatAnnouncement" style="width: auto; margin: 0;">
+                Format as Premium Announcement
               </label>
               <label>Message
                 <textarea id="manualMessage" placeholder="Announcement, reminder, maintenance notice"></textarea>

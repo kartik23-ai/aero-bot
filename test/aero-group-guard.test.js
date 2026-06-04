@@ -173,3 +173,25 @@ test("blocks summary for regular users", () => {
 
   assert.equal(result, "Permission denied. Admin only.");
 });
+
+test("recognizes draw, faq, rename, announce, setfaq commands in handleMessage", () => {
+  const bot = new AeroGroupGuard({ ownerId: "owner" });
+  
+  assert.equal(
+    bot.handleMessage({ text: "/rename New Group", sender: { id: "user" } }, groupContext),
+    "Permission denied. Admin only."
+  );
+  assert.equal(
+    bot.handleMessage({ text: "/announce Hello", sender: { id: "user" } }, groupContext),
+    "Permission denied. Admin only."
+  );
+  assert.equal(
+    bot.handleMessage({ text: "/setfaq Text", sender: { id: "user" } }, groupContext),
+    "Permission denied. Admin only."
+  );
+  
+  assert.equal(
+    bot.handleMessage({ text: "/draw a cat", sender: { id: "user" } }, groupContext),
+    "Unknown command. Type /help."
+  );
+});

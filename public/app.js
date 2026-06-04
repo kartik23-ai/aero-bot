@@ -289,6 +289,20 @@ document.getElementById("scheduleMessage").addEventListener("click", async () =>
   setLoading(btn, false);
 });
 
+document.getElementById("targetMode").addEventListener("change", (e) => {
+  const isAll = e.target.value === "all";
+  document.getElementById("messageGroups").disabled = isAll;
+  const label = document.getElementById("messageGroupsLabel");
+  if (isAll) {
+    label.style.opacity = "0.5";
+    label.style.pointerEvents = "none";
+  } else {
+    label.style.opacity = "1";
+    label.style.pointerEvents = "auto";
+  }
+});
+
+
 document.getElementById("runConsole").addEventListener("click", async () => {
   const btn = document.getElementById("runConsole");
   const instruction = document.getElementById("consoleInstruction").value.trim();
@@ -549,11 +563,16 @@ async function runGroupAction(action) {
 function manualMessagePayload() {
   return {
     groupIds: selectedGroups(),
-    message: value("manualMessage")
+    message: value("manualMessage"),
+    isAnnouncement: document.getElementById("formatAnnouncement").checked
   };
 }
 
 function selectedGroups() {
+  const targetMode = document.getElementById("targetMode")?.value || "selected";
+  if (targetMode === "all") {
+    return (state.dashboard?.groups || []).map(g => g.id);
+  }
   return Array.from(document.getElementById("messageGroups").selectedOptions).map((option) => option.value);
 }
 

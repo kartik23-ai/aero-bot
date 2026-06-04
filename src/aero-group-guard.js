@@ -39,7 +39,10 @@ const ADMIN_COMMANDS = new Set([
   "summary",
   "weeklysummary",
   "chatrecap",
-  "recap"
+  "recap",
+  "rename",
+  "announce",
+  "setfaq"
 ]);
 
 const USER_COMMANDS = new Set([
@@ -52,7 +55,8 @@ const USER_COMMANDS = new Set([
   "tagbot",
   "status",
   "commands",
-  "summaryrequest"
+  "summaryrequest",
+  "draw"
 ]);
 
 class AeroGroupGuard {

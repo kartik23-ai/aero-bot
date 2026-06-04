@@ -63,10 +63,31 @@ test("Manual moderation groupControlAction endpoints support ban_user and kick_u
         targetUserId: "user-to-ban"
       })
     });
-    // It will attempt to moderate, and since aero is offline during test, it output failed or successfully simulated
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.ok(body.status === "complete" || body.status === "failed");
+  } finally {
+    await close();
+  }
+});
+
+test("Manual message endpoint supports isAnnouncement flag and formats accordingly", async () => {
+  const { baseUrl, close } = await startServer();
+  try {
+    const response = await fetch(`${baseUrl}/api/manual/messages/send`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        actor: { id: "owner-1", role: "OWNER" },
+        groupIds: ["group-1"],
+        message: "This is a premium announcement test from dashboard.",
+        isAnnouncement: true
+      })
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.ok(body.result);
+    assert.equal(body.result.groups[0], "group-1");
   } finally {
     await close();
   }

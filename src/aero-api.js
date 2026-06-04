@@ -154,7 +154,7 @@ class AeroAPI {
   /**
    * Send a real message to a dock
    */
-  async sendMessage(dockId, text) {
+  async sendMessage(dockId, text, image = null) {
     const isGroup = this.docks.some(d => d.id === dockId);
     let url;
     if (isGroup) {
@@ -162,9 +162,13 @@ class AeroAPI {
     } else {
       url = `${API_BASE}/messages/send/${dockId}`;
     }
+    const payload = { text };
+    if (image) {
+      payload.image = image;
+    }
     const res = await axios.post(
       url,
-      { text },
+      payload,
       { headers: this._authHeaders() }
     );
     return res.data;
@@ -201,6 +205,18 @@ class AeroAPI {
     const res = await axios.put(
       `${API_BASE}/docks/${dockId}/admin/settings`,
       { settings },
+      { headers: this._authHeaders() }
+    );
+    return res.data;
+  }
+
+  /**
+   * Rename a dock on the Aero Messenger server
+   */
+  async renameDock(dockId, name) {
+    const res = await axios.put(
+      `${API_BASE}/docks/${dockId}`,
+      { name },
       { headers: this._authHeaders() }
     );
     return res.data;
