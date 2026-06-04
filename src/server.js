@@ -107,10 +107,29 @@ function loadGroupDb() {
 function saveGroupDb(data) {
   groupDbCache = data;
   const dbPath = path.join(__dirname, "..", "db", "group_database.json");
+  const tempPath = dbPath + ".tmp";
+  const dbDir = path.dirname(dbPath);
   try {
-    fs.writeFileSync(dbPath, JSON.stringify(data, null, 2), "utf-8");
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    // Write local backup database atomically and asynchronously to prevent blocking the event loop
+    fs.writeFile(tempPath, JSON.stringify(data), "utf-8", (err) => {
+      if (err) {
+        console.error("Failed to write local backup database temp:", err.message);
+        return;
+      }
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+      fs.rename(tempPath, dbPath, (renameErr) => {
+        if (renameErr) {
+          console.error("Failed to rename temp database file:", renameErr.message);
+        }
+      });
+    });
   } catch (e) {
-    console.error("Failed to write local backup database:", e.message);
+    console.error("Failed to trigger local backup database write:", e.message);
   }
   
   if (firestoreDb) {
@@ -2519,11 +2538,16 @@ function queueAssistantReply(groupId, text, reason) {
 }
 
 let chatsCache = null;
+let chatsCacheNeedsSave = false;
+let chatsSaveTimeout = null;
 
 function saveMessageToFile(dockId, message) {
   const dbDir = path.join(__dirname, "..", "db");
   const filePath = path.join(dbDir, "chats.json");
   try {
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
     if (!chatsCache) {
       if (fs.existsSync(filePath)) {
         try {
@@ -2544,13 +2568,71 @@ function saveMessageToFile(dockId, message) {
       chatsCache[dockId].shift();
     }
     
-    // Asynchronous background write to prevent blocking the Event Loop
-    fs.writeFile(filePath, JSON.stringify(chatsCache, null, 2), "utf-8", (err) => {
-      if (err) {
-        console.error("[Storage Error] Failed to write chats to disk:", err.message);
-      }
-    });
+    chatsCacheNeedsSave = true;
+    triggerChatsSave();
   } catch (err) {
     console.error("[Storage Error] Failed to save message:", err.message);
   }
 }
+
+function triggerChatsSave() {
+  if (chatsSaveTimeout) return;
+  
+  chatsSaveTimeout = setTimeout(() => {
+    chatsSaveTimeout = null;
+    if (!chatsCacheNeedsSave || !chatsCache) return;
+    
+    chatsCacheNeedsSave = false;
+    const dbDir = path.join(__dirname, "..", "db");
+    const filePath = path.join(dbDir, "chats.json");
+    const tempPath = filePath + ".tmp";
+    
+    try {
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+      fs.writeFile(tempPath, JSON.stringify(chatsCache), "utf-8", (err) => {
+        if (err) {
+          console.error("[Storage Error] Failed to write chats to temp file:", err.message);
+          return;
+        }
+        if (!fs.existsSync(dbDir)) {
+          fs.mkdirSync(dbDir, { recursive: true });
+        }
+        fs.rename(tempPath, filePath, (renameErr) => {
+          if (renameErr) {
+            console.error("[Storage Error] Failed to rename temp chats file:", renameErr.message);
+          }
+        });
+      });
+    } catch (err) {
+      console.error("[Storage Error] Failed to save chats asynchronously:", err.message);
+    }
+  }, 10000); // Throttle writes to at most once every 10 seconds
+}
+
+// Flush pending database writes on exit
+function flushPendingWritesSync() {
+  if (chatsCacheNeedsSave && chatsCache) {
+    const dbDir = path.join(__dirname, "..", "db");
+    const filePath = path.join(dbDir, "chats.json");
+    try {
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(chatsCache), "utf-8");
+      console.log("[Storage] Chats flushed successfully on exit.");
+    } catch (e) {
+      console.error("[Storage] Failed to flush chats on exit:", e.message);
+    }
+  }
+}
+
+process.on("SIGINT", () => {
+  flushPendingWritesSync();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  flushPendingWritesSync();
+  process.exit(0);
+});

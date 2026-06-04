@@ -16,6 +16,8 @@ class AeroAPI {
     this.messageListeners = [];
     this._refreshTimer = null;
     this._connected = false;
+    this._membersCache = new Map();
+    this._pendingMembers = new Map();
   }
 
   get connected() {
@@ -290,16 +292,30 @@ class AeroAPI {
     if (!this._membersCache) {
       this._membersCache = new Map();
     }
+    if (!this._pendingMembers) {
+      this._pendingMembers = new Map();
+    }
     const now = Date.now();
     if (!forceRefresh) {
       const cached = this._membersCache.get(dockId);
-      if (cached && (now - cached.timestamp < 30000)) {
+      if (cached && (now - cached.timestamp < 60000)) {
         return cached.data;
       }
     }
-    const data = await this._get(`/docks/${dockId}/members`);
-    this._membersCache.set(dockId, { data, timestamp: now });
-    return data;
+    if (this._pendingMembers.has(dockId)) {
+      return this._pendingMembers.get(dockId);
+    }
+    const promise = (async () => {
+      try {
+        const data = await this._get(`/docks/${dockId}/members`);
+        this._membersCache.set(dockId, { data, timestamp: Date.now() });
+        return data;
+      } finally {
+        this._pendingMembers.delete(dockId);
+      }
+    })();
+    this._pendingMembers.set(dockId, promise);
+    return promise;
   }
 
   /**
