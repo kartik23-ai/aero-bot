@@ -116,6 +116,39 @@ class AeroAPI {
   }
 
   /**
+   * Fetch details of a single dock and update cache
+   */
+  async fetchDock(dockId) {
+    try {
+      const d = await this._get(`/docks/${dockId}`);
+      if (d) {
+        const mapped = {
+          id: d._id || d.id,
+          name: d.name,
+          members: d.memberCount || d.members || 0,
+          memberCount: d.memberCount || d.members || 0,
+          role: d.role || "member",
+          type: d.type || "group",
+          icon: d.icon || null,
+          language: "en",
+          status: "enabled",
+          botEnabled: true
+        };
+        const index = this.docks.findIndex(dock => dock.id === dockId);
+        if (index >= 0) {
+          this.docks[index] = mapped;
+        } else {
+          this.docks.push(mapped);
+        }
+        return mapped;
+      }
+    } catch (err) {
+      console.error(`[AeroAPI] Failed to fetch single dock ${dockId}:`, err.message);
+    }
+    return null;
+  }
+
+  /**
    * Fetch all docks the user is joined to
    */
   async fetchDocks() {

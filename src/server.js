@@ -525,12 +525,11 @@ aero.onMessage(async (msg) => {
   }
 
   if (isGroup && !targetDock) {
-    console.log(`[Enforcer] Dock ${dockId} not found in cache. Refreshing docks...`);
+    console.log(`[Enforcer] Dock ${dockId} not found in cache. Refreshing single dock info...`);
     try {
-      await aero.fetchDocks();
-      targetDock = aero.docks.find(d => d.id === dockId);
+      targetDock = await aero.fetchDock(dockId);
     } catch (err) {
-      console.error(`[Enforcer] Failed to dynamically refresh docks:`, err.message);
+      console.error(`[Enforcer] Failed to dynamically refresh single dock:`, err.message);
     }
   }
 
@@ -867,40 +866,59 @@ aero.onMessage(async (msg) => {
   // --- Group Moderation & Command Handling ---
   const groupSettings = getGroupSettings(db, dockId);
 
-  // Fetch group members to check roles
-  let adminIds = [];
-  let isSenderOwner = false;
-  let isSenderAdmin = false;
-  
-  try {
-    const membersRes = await aero.getMembers(dockId);
-    const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
-    
-    adminIds = members
-      .filter(m => m.isAdmin || m.role === "admin" || m.role === "owner")
-      .map(m => m.user?._id || m.user?.id)
-      .filter(Boolean);
+  // 1. Lock Check (Check if locked, but evaluate admin status later)
+  const isLockedViolation = groupSettings.locked;
 
-    const memberObj = members.find(m => {
-      const uid = m.user?._id || m.user?.id;
-      return uid === senderId;
-    });
-
-    if (memberObj) {
-      isSenderOwner = memberObj.role === "owner";
-      isSenderAdmin = memberObj.role === "admin" || memberObj.isAdmin === true || isSenderOwner;
+  // 2. Slowmode Check (Check if violation occurred)
+  let isSlowmodeViolation = false;
+  const now = Date.now();
+  const lastTimeKey = `${dockId}:${senderId}`;
+  if (groupSettings.slowmodeSeconds > 0) {
+    const lastTime = lastMessageTime.get(lastTimeKey) || 0;
+    const diff = (now - lastTime) / 1000;
+    if (diff < groupSettings.slowmodeSeconds) {
+      isSlowmodeViolation = true;
     }
-  } catch (err) {
-    console.error("[Enforcer] Failed to fetch group members:", err.message);
   }
 
-  // Treat owner-1 as overall owner
-  if (senderId === "owner-1") {
-    isSenderOwner = true;
-    isSenderAdmin = true;
+  // 3. Abusive Word Check
+  let isAbusiveViolation = false;
+  if (groupSettings.abusiveFilter) {
+    const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi)\b/i;
+    isAbusiveViolation = localAbusiveRegex.test(text);
+
+    const suspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chut|gand|lund|gaand|saal|kutt|kamin|haram|raand|randi|saala|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
+    const isSuspicious = suspiciousRegex.test(text);
+
+    if (!isAbusiveViolation && isSuspicious && ai.enabled && ai.keys && ai.keys.length > 0) {
+      try {
+        const aiCheck = await ai.runChatCompletion({
+          messages: [
+            {
+              role: "system",
+              content: "You are a content moderation assistant. Check if the user message contains severe Hinglish/Hindi gaalis (specifically mc, bc, madarchod, behnchod, bkl, bhosdike, bakchod, bakchodi, or extreme equivalents). Do NOT flag mild slang, casual teasing, common colloquial words, or light insults (such as chutiya, gandu, lund, gaand, saala, kutta, kamina, harami, etc.) as abusive. We want a relaxed filter that only flags extreme/severe profanity. Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
+            },
+            {
+              role: "user",
+              content: text
+            }
+          ],
+          model: ai.model,
+          max_tokens: 5,
+          temperature: 0.0
+        });
+        const resultText = aiCheck.choices[0]?.message?.content?.trim().toUpperCase();
+        if (resultText === "ABUSIVE") {
+          isAbusiveViolation = true;
+        }
+      } catch (e) {
+        console.error("[Abusive Filter AI Error]:", e.message);
+      }
+    }
   }
 
-  let canEdit = isSenderOwner || isSenderAdmin;
+  // Parse bot command
+  const parsedCmd = bot.parseCommand(text);
 
   const botMentionText = bot.botMention.toLowerCase();
   const lowerText = text.toLowerCase();
@@ -929,9 +947,6 @@ aero.onMessage(async (msg) => {
     isMention = false;
   }
 
-  // Parse bot command
-  const parsedCmd = bot.parseCommand(text);
-
   // Fetch chat history for summaries (only on summary/recap command or request)
   let chatHistory = [];
   const isSummaryCmd = parsedCmd && ["summary", "weeklysummary", "chatrecap", "recap"].includes(parsedCmd.name);
@@ -951,6 +966,58 @@ aero.onMessage(async (msg) => {
       console.error("[Enforcer] Failed to fetch chat history:", err.message);
     }
   }
+
+  // Determine if we need to fetch the member list to check admin roles
+  const cmdName = parsedCmd?.name;
+  const isAdminCmd = ["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
+  const isListAdminsCmd = ["admin", "admins"].includes(cmdName);
+
+  // Bot must be an admin/owner to process moderation or check roles
+  const isBotAdmin = targetDock && (targetDock.role === "admin" || targetDock.role === "owner");
+
+  const needsMembers = isBotAdmin && (
+    isAdminCmd ||
+    isListAdminsCmd ||
+    isLockedViolation ||
+    isSlowmodeViolation ||
+    isAbusiveViolation
+  );
+
+  let adminIds = [];
+  let isSenderOwner = false;
+  let isSenderAdmin = false;
+
+  if (needsMembers) {
+    try {
+      const membersRes = await aero.getMembers(dockId);
+      const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+      
+      adminIds = members
+        .filter(m => m.isAdmin || m.role === "admin" || m.role === "owner")
+        .map(m => m.user?._id || m.user?.id)
+        .filter(Boolean);
+
+      const memberObj = members.find(m => {
+        const uid = m.user?._id || m.user?.id;
+        return uid === senderId;
+      });
+
+      if (memberObj) {
+        isSenderOwner = memberObj.role === "owner";
+        isSenderAdmin = memberObj.role === "admin" || memberObj.isAdmin === true || isSenderOwner;
+      }
+    } catch (err) {
+      console.error("[Enforcer] Failed to fetch group members:", err.message);
+    }
+  }
+
+  // Treat owner-1 as overall owner
+  if (senderId === "owner-1") {
+    isSenderOwner = true;
+    isSenderAdmin = true;
+  }
+
+  let canEdit = isSenderOwner || isSenderAdmin;
 
   const context = {
     enabled: assistantMode.enabled,
@@ -1013,10 +1080,8 @@ aero.onMessage(async (msg) => {
     }
   };
 
-  // parsedCmd is already defined above
-
-  // 1. Lock Enforcement (Only non-admins are blocked, but check if message is a command first)
-  if (groupSettings.locked && !isSenderAdmin) {
+  // 1. Lock Enforcement
+  if (isLockedViolation && !isSenderAdmin) {
     try {
       await aero.sendMessage(dockId, `⚠️ @${senderName}, chat is currently locked by admin.`);
       return;
@@ -1025,13 +1090,11 @@ aero.onMessage(async (msg) => {
     }
   }
 
-  // 2. Slowmode Enforcement (Only non-admins)
+  // 2. Slowmode Enforcement
   if (groupSettings.slowmodeSeconds > 0 && !isSenderAdmin) {
-    const now = Date.now();
-    const lastTimeKey = `${dockId}:${senderId}`;
-    const lastTime = lastMessageTime.get(lastTimeKey) || 0;
-    const diff = (now - lastTime) / 1000;
-    if (diff < groupSettings.slowmodeSeconds) {
+    if (isSlowmodeViolation) {
+      const lastTime = lastMessageTime.get(lastTimeKey) || 0;
+      const diff = (now - lastTime) / 1000;
       const waitTime = Math.ceil(groupSettings.slowmodeSeconds - diff);
       try {
         await aero.sendMessage(dockId, `⏳ @${senderName}, please wait ${waitTime}s before sending another message.`);
@@ -1039,65 +1102,32 @@ aero.onMessage(async (msg) => {
       } catch (err) {
         console.error("[Enforcer] Slowmode warning failed:", err.message);
       }
+    } else {
+      lastMessageTime.set(lastTimeKey, now);
     }
-    lastMessageTime.set(lastTimeKey, now);
   }
 
   // 3. Abusive Word Filter
-  if (groupSettings.abusiveFilter && !isSenderAdmin) {
-    const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi)\b/i;
-    let isAbusiveMsg = localAbusiveRegex.test(text);
+  if (isAbusiveViolation && !isSenderAdmin) {
+    if (!groupSettings.warnings[senderId]) {
+      groupSettings.warnings[senderId] = 0;
+    }
+    groupSettings.warnings[senderId]++;
+    const currentWarns = groupSettings.warnings[senderId];
+    saveGroupDb(db);
 
-    const suspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chut|gand|lund|gaand|saal|kutt|kamin|haram|raand|randi|saala|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
-    const isSuspicious = suspiciousRegex.test(text);
-
-    if (!isAbusiveMsg && isSuspicious && ai.enabled && ai.keys && ai.keys.length > 0) {
+    if (currentWarns > 2) {
       try {
-        const aiCheck = await ai.runChatCompletion({
-          messages: [
-            {
-              role: "system",
-              content: "You are a content moderation assistant. Check if the user message contains severe Hinglish/Hindi gaalis (specifically mc, bc, madarchod, behnchod, bkl, bhosdike, bakchod, bakchodi, or extreme equivalents). Do NOT flag mild slang, casual teasing, common colloquial words, or light insults (such as chutiya, gandu, lund, gaand, saala, kutta, kamina, harami, etc.) as abusive. We want a relaxed filter that only flags extreme/severe profanity. Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
-            },
-            {
-              role: "user",
-              content: text
-            }
-          ],
-          model: ai.model,
-          max_tokens: 5,
-          temperature: 0.0
-        });
-        const resultText = aiCheck.choices[0]?.message?.content?.trim().toUpperCase();
-        if (resultText === "ABUSIVE") {
-          isAbusiveMsg = true;
-        }
-      } catch (e) {
-        console.error("[Abusive Filter AI Error]:", e.message);
+        await aero.banMember(dockId, senderId);
+        await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Exceeded 2 warnings (Abusive language).`);
+      } catch (banErr) {
+        console.error("[Auto-Ban Error]:", banErr.message);
+        await aero.sendMessage(dockId, `🚨 @${senderName} exceeded 2 warnings, but automatic ban failed: ${banErr.message}`);
       }
+    } else {
+      await aero.sendMessage(dockId, `⚠️ Warning: Abusive words are not allowed in this group. @${senderName}, this is warning ${currentWarns}/3.`);
     }
-
-    if (isAbusiveMsg) {
-      if (!groupSettings.warnings[senderId]) {
-        groupSettings.warnings[senderId] = 0;
-      }
-      groupSettings.warnings[senderId]++;
-      const currentWarns = groupSettings.warnings[senderId];
-      saveGroupDb(db);
-
-      if (currentWarns > 2) {
-        try {
-          await aero.banMember(dockId, senderId);
-          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Exceeded 2 warnings (Abusive language).`);
-        } catch (banErr) {
-          console.error("[Auto-Ban Error]:", banErr.message);
-          await aero.sendMessage(dockId, `🚨 @${senderName} exceeded 2 warnings, but automatic ban failed: ${banErr.message}`);
-        }
-      } else {
-        await aero.sendMessage(dockId, `⚠️ Warning: Abusive words are not allowed in this group. @${senderName}, this is warning ${currentWarns}/3.`);
-      }
-      return;
-    }
+    return;
   }
 
   // --- Process commands using the per-group database ---
