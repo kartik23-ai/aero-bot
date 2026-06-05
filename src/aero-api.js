@@ -502,6 +502,7 @@ class AeroAPI {
           try {
             const msg = {
               dockId: data.dockId,
+              isGroup: true,
               ...(data.message || data)
             };
             listener(msg);
@@ -520,6 +521,7 @@ class AeroAPI {
 
             const msg = {
               dockId: partnerId,
+              isGroup: false,
               senderId: senderId,
               sender: typeof data.senderId === "object" ? data.senderId : { id: senderId },
               text: data.text || "",

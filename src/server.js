@@ -463,12 +463,31 @@ aero.onMessage(async (msg) => {
   // Load database
   const db = loadGroupDb();
 
+  // Determine if it is a Group or DM (Direct Message)
+  let targetDock = aero.docks.find(d => d.id === dockId);
+  let isGroup = msg.isGroup;
+  if (isGroup === undefined) {
+    isGroup = !!(targetDock && (targetDock.type === "group" || targetDock.members > 2));
+  }
+
+  if (isGroup && !targetDock) {
+    console.log(`[Enforcer] Dock ${dockId} not found in cache. Refreshing docks...`);
+    try {
+      await aero.fetchDocks();
+      targetDock = aero.docks.find(d => d.id === dockId);
+    } catch (err) {
+      console.error(`[Enforcer] Failed to dynamically refresh docks:`, err.message);
+    }
+  }
+
+  // Final check for group status
+  if (msg.isGroup === undefined) {
+    isGroup = !!(targetDock && (targetDock.type === "group" || targetDock.members > 2));
+  }
+
   // Whitelist/Approvals check
   const isBotOrOwner = senderId === "owner-1" || (botUserId && senderId === botUserId);
   if (!isBotOrOwner && !db.approvedUsers.includes(senderId)) {
-    const targetDock = aero.docks.find(d => d.id === dockId);
-    const isGroup = targetDock && (targetDock.type === "group" || targetDock.members > 2);
-
     if (!isGroup) {
       const alreadyPending = db.pendingUsers.find(u => u.id === senderId);
       if (!alreadyPending) {
@@ -508,10 +527,7 @@ aero.onMessage(async (msg) => {
 
   if (!assistantMode.enabled) return;
 
-  const targetDock = aero.docks.find(d => d.id === dockId);
   const groupName = targetDock ? targetDock.name : "Aero Group";
-  // Determine if it is a Group or DM (Direct Message)
-  const isGroup = targetDock && (targetDock.type === "group" || targetDock.members > 2);
 
   if (msg.isSystemMessage) {
     if (aero._membersCache) {
