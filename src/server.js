@@ -1573,7 +1573,7 @@ aero.onMessage(async (msg) => {
         finalReply = `@${senderName} ${finalReply}`;
       }
       console.log(`[AutoReply] Sending to dock ${dockId}: ${finalReply}`);
-      await aero.sendMessage(dockId, finalReply);
+      await aero.sendMessage(dockId, finalReply, null, isGroup);
       queueAssistantReply(dockId, finalReply, isMention ? "mention_reply" : "command_reply");
     } catch (err) {
       console.error("[AutoReply] Failed to send response:", err.message);

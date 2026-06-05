@@ -153,13 +153,13 @@ class AeroAPI {
     }
   }
 
-  /**
-   * Send a real message to a dock
-   */
-  async sendMessage(dockId, text, image = null) {
-    const isGroup = this.docks.some(d => d.id === dockId);
+  async sendMessage(dockId, text, image = null, isGroup = null) {
+    let useGroup = isGroup;
+    if (useGroup === null) {
+      useGroup = this.docks.some(d => d.id === dockId);
+    }
     let url;
-    if (isGroup) {
+    if (useGroup) {
       url = `${API_BASE}/docks/${dockId}/messages`;
     } else {
       url = `${API_BASE}/messages/send/${dockId}`;
