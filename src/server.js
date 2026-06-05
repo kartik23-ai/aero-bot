@@ -975,12 +975,11 @@ aero.onMessage(async (msg) => {
   // Bot must be an admin/owner to process moderation or check roles
   const isBotAdmin = targetDock && (targetDock.role === "admin" || targetDock.role === "owner");
 
-  const needsMembers = isBotAdmin && (
+  const needsMembers = (
     isAdminCmd ||
     isListAdminsCmd ||
-    isLockedViolation ||
-    isSlowmodeViolation ||
-    isAbusiveViolation
+    isMention ||
+    (isBotAdmin && (isLockedViolation || isSlowmodeViolation || isAbusiveViolation))
   );
 
   let adminIds = [];
@@ -992,6 +991,21 @@ aero.onMessage(async (msg) => {
       const membersRes = await aero.getMembers(dockId);
       const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
       
+      // Update bot's own cached role if we fetched members
+      if (targetDock && botUserId) {
+        const botMember = members.find(m => {
+          const uid = m.user?._id || m.user?.id;
+          return uid === botUserId;
+        });
+        if (botMember) {
+          const oldRole = targetDock.role;
+          targetDock.role = botMember.role || "member";
+          if (oldRole !== targetDock.role) {
+            console.log(`[Enforcer] Bot role updated in cache for dock ${dockId}: ${oldRole} -> ${targetDock.role}`);
+          }
+        }
+      }
+
       adminIds = members
         .filter(m => m.isAdmin || m.role === "admin" || m.role === "owner")
         .map(m => m.user?._id || m.user?.id)
