@@ -830,7 +830,7 @@ aero.onMessage(async (msg) => {
     isSenderAdmin = true;
   }
 
-  const canEdit = isSenderOwner || isSenderAdmin;
+  let canEdit = isSenderOwner || isSenderAdmin;
 
   const botMentionText = bot.botMention.toLowerCase();
   const lowerText = text.toLowerCase();
@@ -1033,6 +1033,32 @@ aero.onMessage(async (msg) => {
   if (parsedCmd) {
     const cmdName = parsedCmd.name;
     const argsText = parsedCmd.argsText || "";
+
+    const isAdminCmd = ["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
+
+    if (isAdminCmd && !canEdit) {
+      try {
+        console.log(`[Enforcer] Re-evaluating permissions for ${senderName} (${senderId}) on admin command /${cmdName}`);
+        const freshMembers = await aero.getMembers(dockId, true);
+        const membersList = Array.isArray(freshMembers) ? freshMembers : (freshMembers?.members || []);
+        const memberObj = membersList.find(m => {
+          const uid = m.user?._id || m.user?.id;
+          return uid === senderId;
+        });
+        if (memberObj) {
+          const isOwnerNow = memberObj.role === "owner";
+          const isAdminNow = memberObj.role === "admin" || memberObj.isAdmin === true || isOwnerNow;
+          if (isAdminNow) {
+            isSenderAdmin = true;
+            isSenderOwner = isOwnerNow;
+            canEdit = true;
+            console.log(`[Enforcer] Promotion confirmed for ${senderName}. Permission GRANTED.`);
+          }
+        }
+      } catch (e) {
+        console.error("[Enforcer] Promotion check failed:", e.message);
+      }
+    }
 
     if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq"].includes(cmdName)) {
       if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "rename", "announce", "setfaq"].includes(cmdName)) {
