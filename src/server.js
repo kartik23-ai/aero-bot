@@ -449,12 +449,21 @@ aero.onMessage(async (msg) => {
   const senderObj = msg.senderId || msg.sender;
   const botUserId = aero.user?._id || aero.user?.id;
   
-  if (senderObj && botUserId && (senderObj._id === botUserId || senderObj.id === botUserId)) {
-    return;
+  let senderId = "unknown";
+  let senderName = "User";
+
+  if (senderObj) {
+    if (typeof senderObj === "object") {
+      senderId = senderObj._id || senderObj.id || "unknown";
+      senderName = senderObj.username || senderObj.displayName || senderObj.fullName || "User";
+    } else if (typeof senderObj === "string") {
+      senderId = senderObj;
+    }
   }
 
-  const senderId = senderObj?._id || senderObj?.id || "unknown";
-  const senderName = senderObj?.username || senderObj?.displayName || "User";
+  if (botUserId && senderId === botUserId) {
+    return;
+  }
   const text = msg.text || "";
   const dockId = msg.dockId;
 

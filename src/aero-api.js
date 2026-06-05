@@ -331,6 +331,7 @@ class AeroAPI {
    */
   async refreshToken() {
     try {
+      let refreshed = false;
       // First try refresh endpoint
       const headers = {};
       if (this.refreshTokenCookie) {
@@ -344,11 +345,9 @@ class AeroAPI {
       if (res.status === 200 && res.data.accessToken) {
         this.accessToken = res.data.accessToken;
         console.log(`[AeroAPI] Token refreshed at ${ts()}`);
-        return true;
-      }
-
-      // If refresh fails, re-login with saved credentials
-      if (this.credentials) {
+        refreshed = true;
+      } else if (this.credentials) {
+        // If refresh fails, re-login with saved credentials
         console.log(`[AeroAPI] Refresh failed, re-logging in...`);
         const loginRes = await axios.post(`${API_BASE}/auth/login`, {
           identifier: this.credentials.email,
@@ -364,11 +363,16 @@ class AeroAPI {
             }
           }
           console.log(`[AeroAPI] Re-login successful at ${ts()}`);
-          return true;
+          refreshed = true;
         }
       }
 
-      return false;
+      if (refreshed && this.socket) {
+        this.socket.auth.token = this.accessToken;
+        this.socket.disconnect().connect();
+        console.log(`[AeroAPI] Socket re-connected with fresh token.`);
+      }
+      return refreshed;
     } catch (err) {
       console.error(`[AeroAPI] Token refresh error: ${err.message}`);
       // Try re-login
@@ -379,6 +383,11 @@ class AeroAPI {
             password: this.credentials.password
           });
           this.accessToken = loginRes.data.accessToken || loginRes.data.token;
+          if (this.socket) {
+            this.socket.auth.token = this.accessToken;
+            this.socket.disconnect().connect();
+            console.log(`[AeroAPI] Socket reconnected with fresh token after re-login error.`);
+          }
           return true;
         } catch (e) {
           console.error(`[AeroAPI] Re-login also failed: ${e.message}`);
@@ -488,7 +497,7 @@ class AeroAPI {
         auth: { token: this.accessToken },
         transports: ["websocket", "polling"],
         reconnection: true,
-        reconnectionAttempts: 10,
+        reconnectionAttempts: Infinity,
         reconnectionDelay: 2000
       });
 
@@ -539,8 +548,17 @@ class AeroAPI {
         console.log(`[AeroAPI] Socket disconnected: ${reason}`);
       });
 
-      this.socket.on("connect_error", (err) => {
+      this.socket.on("connect_error", async (err) => {
         console.error(`[AeroAPI] Socket error: ${err.message}`);
+        if (err.message && (err.message.includes("auth") || err.message.includes("token") || err.message.includes("unauthorized") || err.message.includes("401"))) {
+          console.log("[AeroAPI] Socket auth error. Attempting token refresh...");
+          const refreshed = await this.refreshToken();
+          if (refreshed) {
+            this.socket.auth.token = this.accessToken;
+            this.socket.disconnect().connect();
+            console.log("[AeroAPI] Socket reconnected with fresh token after auth error.");
+          }
+        }
       });
     } catch (err) {
       console.error(`[AeroAPI] Socket.io connection failed: ${err.message}`);
