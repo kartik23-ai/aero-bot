@@ -929,6 +929,9 @@ aero.onMessage(async (msg) => {
     isMention = false;
   }
 
+  // Parse bot command
+  const parsedCmd = bot.parseCommand(text);
+
   // Fetch chat history for summaries (only on summary/recap command or request)
   let chatHistory = [];
   const isSummaryCmd = parsedCmd && ["summary", "weeklysummary", "chatrecap", "recap"].includes(parsedCmd.name);
@@ -1010,7 +1013,7 @@ aero.onMessage(async (msg) => {
     }
   };
 
-  const parsedCmd = bot.parseCommand(text);
+  // parsedCmd is already defined above
 
   // 1. Lock Enforcement (Only non-admins are blocked, but check if message is a command first)
   if (groupSettings.locked && !isSenderAdmin) {
@@ -2403,7 +2406,7 @@ function readJson(req) {
   });
 }
 
-module.exports = { server, bot, ai };
+module.exports = { server, bot, ai, aero };
 
 function normalizeGroupTargets(groupIds) {
   const activeGroups = getActiveGroups();

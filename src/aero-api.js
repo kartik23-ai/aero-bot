@@ -511,8 +511,8 @@ class AeroAPI {
           try {
             const msg = {
               dockId: data.dockId,
-              isGroup: true,
-              ...(data.message || data)
+              ...(data.message || data),
+              isGroup: true
             };
             listener(msg);
           } catch (e) { console.error("[AeroAPI] Listener error:", e); }
