@@ -319,6 +319,24 @@ class AeroAPI {
   }
 
   /**
+   * Fetch a single member from a dock by userId.
+   * Used for per-command admin checks — never fetches the full member list.
+   */
+  async getMember(dockId, userId) {
+    try {
+      const data = await this._get(`/docks/${dockId}/members/${userId}`);
+      return data;
+    } catch (err) {
+      // 404 means user is not in this dock
+      if (err?.response?.status === 404) {
+        return null;
+      }
+      console.error(`[AeroAPI] Failed to fetch member ${userId} in dock ${dockId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
    * Fetch members of a dock with a 30-second caching mechanism to optimize CPU/Network
    */
   async getMembers(dockId, forceRefresh = false) {

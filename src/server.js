@@ -52,6 +52,8 @@ const aero = new AeroAPI();
 const bot = new AeroGroupGuard({ ownerId: "owner-1", botMention: "@AeroGroupGuard", prefix: "@" });
 const ai = new AiAssistant({ model: config.aiModel });
 
+// No admins cache — admin status is checked per-command via single API call
+
 // Initialize Firebase connection if key exists
 let firestoreDb = null;
 let groupDbCache = null;
@@ -200,37 +202,54 @@ function getGroupSettings(db, dockId) {
   return g;
 }
 
-async function ensureMembersInDb(dockId, forceSync = false) {
-  const db = loadGroupDb();
-  const groupSettings = getGroupSettings(db, dockId);
-  const botUserId = aero.user?._id || aero.user?.id;
-  
-  if (!groupSettings.members) {
-    groupSettings.members = {};
+/**
+ * Check if a user is an admin in a specific dock.
+ * Makes ONE API call for ONLY that user — never fetches full member list.
+ */
+async function checkIsAdmin(dockId, userId) {
+  if (!userId || !dockId) return false;
+  if (userId === "owner-1") return true;
+  try {
+    const member = await aero.getMember(dockId, userId);
+    if (!member) return false;
+    return member.role === "admin" || member.role === "owner" || member.isAdmin === true;
+  } catch (err) {
+    console.error(`[AdminCheck] Failed to check admin status for ${userId} in ${dockId}:`, err.message);
+    return false;
   }
+}
+
+function resolveMentionedUserId(msg, targetUsername) {
+  if (!targetUsername) return null;
+  const cleanTarget = String(targetUsername).replace(/^@/, "").trim().toLowerCase();
   
-  if (Object.keys(groupSettings.members).length === 0 || forceSync) {
-    console.log(`[Enforcer] Syncing member list for dock ${dockId} to database...`);
-    try {
-      const membersRes = await aero.getMembers(dockId, true);
-      const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
-      
-      groupSettings.members = {};
-      for (const m of members) {
-        const uid = m.user?._id || m.user?.id;
-        if (uid) {
-          groupSettings.members[uid] = {
-            username: m.user?.username || m.user?.mention || m.user?.displayName || "User",
-            role: m.role || "member",
-            isAdmin: m.isAdmin || m.role === "admin" || m.role === "owner"
-          };
-        }
-      }
-      saveGroupDb(db);
-    } catch (err) {
-      console.error(`[Enforcer] Failed to sync members for ${dockId}:`, err.message);
+  // 1. Try to resolve via text matching and msg.mentions array in O(1)
+  if (msg && msg.text && msg.mentions && msg.mentions.length > 0) {
+    const matches = msg.text.match(/@(\w+)/g) || [];
+    const cleanMatches = matches.map(m => m.replace(/^@/, "").toLowerCase());
+    const idx = cleanMatches.indexOf(cleanTarget);
+    if (idx !== -1 && idx < msg.mentions.length) {
+      const userId = msg.mentions[idx];
+      return typeof userId === "object" ? userId._id || userId.id : userId;
     }
   }
+  
+  // 2. Try looking up in the local members database (fallback)
+  const db = loadGroupDb();
+  const groupSettings = getGroupSettings(db, msg.dockId || msg.groupId);
+  if (groupSettings && groupSettings.members) {
+    const targetMember = findMemberByUsername(groupSettings, targetUsername);
+    if (targetMember) {
+      return targetMember.id;
+    }
+  }
+  
+  // 3. Fallback: check if targetUsername itself is a valid 24-character hex ID (ObjectId)
+  if (/^[0-9a-fA-F]{24}$/.test(cleanTarget)) {
+    return targetUsername.trim();
+  }
+  
+  return null;
 }
 
 function findMemberByUsername(groupSettings, username) {
@@ -1022,19 +1041,19 @@ aero.onMessage(async (msg) => {
   // Bot must be an admin/owner to process moderation or check roles
   let isBotAdmin = targetDock && (targetDock.role === "admin" || targetDock.role === "owner");
 
-  // Bot Admin Gate
+  // Bot Admin Gate — check bot's own role for admin commands
   if (isAdminCmd && !isBotAdmin) {
     try {
-      console.log(`[Enforcer] Bot is cached as member but admin command was triggered. Refreshing dock role...`);
+      console.log(`[Enforcer] Bot is cached as member but admin command triggered. Checking bot role...`);
       const freshDock = await aero.fetchDock(dockId);
       if (freshDock) {
         targetDock = freshDock;
         isBotAdmin = targetDock.role === "admin" || targetDock.role === "owner";
       }
     } catch (err) {
-      console.error(`[Enforcer] Failed to check bot promotion status:`, err.message);
+      console.error(`[Enforcer] Failed to check bot role:`, err.message);
     }
-    
+
     if (!isBotAdmin) {
       console.log(`[Enforcer] Bot is not admin in ${dockId}. Rejecting command /${cmdName}`);
       await aero.sendMessage(dockId, "❌ Please make me admin first.");
@@ -1042,58 +1061,17 @@ aero.onMessage(async (msg) => {
     }
   }
 
-  const needsMembers = (
-    isAdminCmd ||
-    isListAdminsCmd ||
-    isMention ||
-    (isBotAdmin && (isLockedViolation || isSlowmodeViolation || isAbusiveViolation))
-  );
-
-  let adminIds = [];
+  // Check sender's admin status — single API call, only for admin commands
   let isSenderOwner = false;
   let isSenderAdmin = false;
 
-  if (needsMembers) {
-    try {
-      await ensureMembersInDb(dockId);
-      
-      // If the sender is not in our database members, sync them
-      if (!groupSettings.members || !groupSettings.members[senderId]) {
-        console.log(`[Enforcer] Sender ${senderId} not found in database members. Syncing...`);
-        await ensureMembersInDb(dockId, true);
-      }
-      
-      // Update bot's own cached role from database
-      if (targetDock && botUserId) {
-        const botMember = groupSettings.members[botUserId];
-        if (botMember) {
-          const oldRole = targetDock.role;
-          targetDock.role = botMember.role || "member";
-          if (oldRole !== targetDock.role) {
-            console.log(`[Enforcer] Bot role updated in cache for dock ${dockId}: ${oldRole} -> ${targetDock.role}`);
-          }
-        }
-      }
-
-      adminIds = Object.keys(groupSettings.members).filter(uid => {
-        const m = groupSettings.members[uid];
-        return m.isAdmin || m.role === "admin" || m.role === "owner";
-      });
-
-      const senderMember = groupSettings.members[senderId];
-      if (senderMember) {
-        isSenderOwner = senderMember.role === "owner";
-        isSenderAdmin = senderMember.isAdmin || isSenderOwner;
-      }
-    } catch (err) {
-      console.error("[Enforcer] Failed to resolve group members from database:", err.message);
-    }
-  }
-
-  // Treat owner-1 as overall owner
   if (senderId === "owner-1") {
     isSenderOwner = true;
     isSenderAdmin = true;
+  } else if (isGroup && (isAdminCmd || isListAdminsCmd)) {
+    // Only call API when command actually needs admin check
+    isSenderAdmin = await checkIsAdmin(dockId, senderId);
+    console.log(`[AdminCheck] Sender ${senderId} in dock ${dockId}: isAdmin=${isSenderAdmin}`);
   }
 
   let canEdit = isSenderOwner || isSenderAdmin;
@@ -1102,7 +1080,6 @@ aero.onMessage(async (msg) => {
     enabled: assistantMode.enabled,
     isGroup,
     groupName,
-    adminIds,
     chatHistory,
     assistantOnly: assistantMode.nonDestructiveOnly,
     platformActions: {
@@ -1115,24 +1092,36 @@ aero.onMessage(async (msg) => {
               await aero.sendMessage(dockId, `❌ Please make me admin first.`);
               return;
             }
-            await ensureMembersInDb(dockId);
-            let targetMember = findMemberByUsername(groupSettings, targetUsername);
-            if (!targetMember) {
-              console.log(`[PlatformAction] User @${targetUsername} not found in database members. Syncing...`);
-              await ensureMembersInDb(dockId, true);
-              targetMember = findMemberByUsername(groupSettings, targetUsername);
+            // Step 1: Resolve target userId from message mentions (O(1), no API call)
+            let targetId = resolveMentionedUserId(msg, targetUsername);
+
+            // Step 2: If not in mentions, check local DB
+            if (!targetId) {
+              const targetMember = findMemberByUsername(groupSettings, targetUsername);
+              if (targetMember) {
+                targetId = targetMember.id;
+                console.log(`[Kick] Resolved @${targetUsername} from local DB: ${targetId}`);
+              }
             }
-            if (!targetMember) {
-              await aero.sendMessage(dockId, `❌ Cannot kick @${targetUsername}: User not found in this group.`);
+
+            // Step 3: If still not found, send ONE API call to check if this user is in the dock
+            if (!targetId) {
+              console.log(`[Kick] @${targetUsername} not in mentions or DB. Cannot resolve without full member list.`);
+              await aero.sendMessage(dockId, `❌ Cannot kick @${targetUsername}: User not found. Please use @mention when running /kick.`);
               return;
             }
-            const targetId = targetMember.id;
-            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+
+            // Check if target is admin — single API call for ONLY that user
+            const isTargetAdmin = await checkIsAdmin(dockId, targetId);
             if (isTargetAdmin) {
-              await aero.sendMessage(dockId, `❌ Cannot perform moderation actions (kick) on other admins or the group owner.`);
+              await aero.sendMessage(dockId, `❌ Cannot kick admins or the group owner.`);
               return;
             }
             await aero.kickMember(dockId, targetId);
+            // Store in local DB for future commands (lazy member tracking)
+            if (!groupSettings.members) groupSettings.members = {};
+            delete groupSettings.members[targetId];
+            saveGroupDb(db);
           } catch (err) {
             console.error(`[PlatformAction] Kick failed for @${targetUsername}:`, err.message);
             await aero.sendMessage(dockId, `❌ Kick failed for @${targetUsername}: ${err.message}`);
@@ -1148,24 +1137,43 @@ aero.onMessage(async (msg) => {
               await aero.sendMessage(dockId, `❌ Please make me admin first.`);
               return;
             }
-            await ensureMembersInDb(dockId);
-            let targetMember = findMemberByUsername(groupSettings, targetUsername);
-            if (!targetMember) {
-              console.log(`[PlatformAction] User @${targetUsername} not found in database members. Syncing...`);
-              await ensureMembersInDb(dockId, true);
-              targetMember = findMemberByUsername(groupSettings, targetUsername);
+            // Step 1: Resolve target userId from message mentions (O(1), no API call)
+            let targetId = resolveMentionedUserId(msg, targetUsername);
+
+            // Step 2: If not in mentions, check local DB
+            if (!targetId) {
+              const targetMember = findMemberByUsername(groupSettings, targetUsername);
+              if (targetMember) {
+                targetId = targetMember.id;
+                console.log(`[Ban] Resolved @${targetUsername} from local DB: ${targetId}`);
+              }
             }
-            if (!targetMember) {
-              await aero.sendMessage(dockId, `❌ Cannot ban @${targetUsername}: User not found in this group.`);
+
+            // Step 3: If still not found, send ONE API call for only this user
+            if (!targetId) {
+              console.log(`[Ban] @${targetUsername} not in mentions or DB. Cannot resolve without full member list.`);
+              await aero.sendMessage(dockId, `❌ Cannot ban @${targetUsername}: User not found. Please use @mention when running /ban.`);
               return;
             }
-            const targetId = targetMember.id;
-            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+
+            // Verify target is actually in this dock (single API call)
+            const targetMemberData = await aero.getMember(dockId, targetId);
+            if (!targetMemberData) {
+              await aero.sendMessage(dockId, `❌ Cannot ban @${targetUsername}: User is not a member of this dock.`);
+              return;
+            }
+
+            // Check if target is admin — use already-fetched data
+            const isTargetAdmin = targetMemberData.role === "admin" || targetMemberData.role === "owner" || targetMemberData.isAdmin === true;
             if (isTargetAdmin) {
-              await aero.sendMessage(dockId, `❌ Cannot perform moderation actions (ban) on other admins or the group owner.`);
+              await aero.sendMessage(dockId, `❌ Cannot ban admins or the group owner.`);
               return;
             }
             await aero.banMember(dockId, targetId);
+            // Remove from local DB after ban
+            if (!groupSettings.members) groupSettings.members = {};
+            delete groupSettings.members[targetId];
+            saveGroupDb(db);
           } catch (err) {
             console.error(`[PlatformAction] Ban failed for @${targetUsername}:`, err.message);
             await aero.sendMessage(dockId, `❌ Ban failed for @${targetUsername}: ${err.message}`);
@@ -1236,18 +1244,13 @@ aero.onMessage(async (msg) => {
 
     if (isAdminCmd && !canEdit) {
       try {
-        console.log(`[Enforcer] Re-evaluating permissions for ${senderName} (${senderId}) on admin command /${cmdName}`);
-        await ensureMembersInDb(dockId, true);
-        const memberObj = groupSettings.members[senderId];
-        if (memberObj) {
-          const isOwnerNow = memberObj.role === "owner";
-          const isAdminNow = memberObj.isAdmin || isOwnerNow;
-          if (isAdminNow) {
-            isSenderAdmin = true;
-            isSenderOwner = isOwnerNow;
-            canEdit = true;
-            console.log(`[Enforcer] Promotion confirmed for ${senderName}. Permission GRANTED.`);
-          }
+        console.log(`[Enforcer] Re-evaluating permissions for ${senderName} (${senderId}) on command /${cmdName}`);
+        // Single API call — check only this sender's role, not full member list
+        const freshAdmin = await checkIsAdmin(dockId, senderId);
+        if (freshAdmin) {
+          isSenderAdmin = true;
+          canEdit = true;
+          console.log(`[Enforcer] Promotion confirmed for ${senderName}. Permission GRANTED.`);
         }
       } catch (e) {
         console.error("[Enforcer] Promotion check failed:", e.message);
@@ -1387,9 +1390,10 @@ aero.onMessage(async (msg) => {
                   let finalMessage = argsText;
                   if (argsText.includes("@everyone")) {
                     try {
-                      await ensureMembersInDb(dockId);
-                      const mentionsList = Object.keys(groupSettings.members)
-                        .map(uid => groupSettings.members[uid].username)
+                      const membersRes = await aero.getMembers(dockId);
+                      const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+                      const mentionsList = members
+                        .map(m => m.user?.username || m.user?.mention || m.user?.displayName)
                         .filter(Boolean);
                       if (mentionsList.length > 0) {
                         const cleanedText = argsText.replace(/@everyone/g, "").trim();
@@ -1441,44 +1445,51 @@ aero.onMessage(async (msg) => {
           if (!targetUserArg) {
             reply = `Please specify a user to ${cmdName === "warn" ? "warn" : "clear warnings for"}.`;
           } else {
-            await ensureMembersInDb(dockId);
-            let targetMember = findMemberByUsername(groupSettings, targetUsername);
-            if (!targetMember) {
-              console.log(`[WarnCommand] Target @${targetUsername} not found in database members. Syncing...`);
-              await ensureMembersInDb(dockId, true);
-              targetMember = findMemberByUsername(groupSettings, targetUsername);
+            // Step 1: Resolve via message mentions (O(1), no API call)
+            let targetId = resolveMentionedUserId(msg, targetUsername);
+
+            // Step 2: Check local DB
+            if (!targetId) {
+              const localMember = findMemberByUsername(groupSettings, targetUsername);
+              if (localMember) {
+                targetId = localMember.id;
+                console.log(`[WarnCommand] Resolved @${targetUsername} from local DB: ${targetId}`);
+              }
             }
 
-            if (!targetMember) {
-              reply = `❌ User @${targetUsername} not found in this group.`;
+            if (!targetId) {
+              reply = `❌ User @${targetUsername} not found. Please use @mention when running /${cmdName}.`;
             } else {
-              const targetId = targetMember.id;
-              const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
-              if (isTargetAdmin && cmdName === "warn") {
-                reply = `❌ Cannot perform moderation actions (warn) on other admins or the group owner.`;
-              } else if (cmdName === "warn") {
-                const reason = parts.slice(1).join(" ") || "No reason provided.";
-                if (!groupSettings.warnings[targetId]) {
-                  groupSettings.warnings[targetId] = 0;
-                }
-                groupSettings.warnings[targetId]++;
-                const currentWarns = groupSettings.warnings[targetId];
-                saveGroupDb(db);
+              // Single API call for ONLY this user — check membership + role
+              const targetMemberData = await aero.getMember(dockId, targetId);
+              if (!targetMemberData) {
+                reply = `❌ @${targetUsername} is not a member of this dock.`;
+              } else {
+                const isTargetAdmin = targetMemberData.role === "admin" || targetMemberData.role === "owner" || targetMemberData.isAdmin === true || targetId === "owner-1";
+                if (isTargetAdmin && cmdName === "warn") {
+                  reply = `❌ Cannot warn admins or the group owner.`;
+                } else if (cmdName === "warn") {
+                  const reason = parts.slice(1).join(" ") || "No reason provided.";
+                  if (!groupSettings.warnings[targetId]) groupSettings.warnings[targetId] = 0;
+                  groupSettings.warnings[targetId]++;
+                  const currentWarns = groupSettings.warnings[targetId];
+                  saveGroupDb(db);
 
-                if (currentWarns > 2) {
-                  try {
-                    await aero.banMember(dockId, targetId);
-                    reply = `🚨 @${targetUsername} has been automatically banned. Reason: Exceeded 2 warnings (${reason}).`;
-                  } catch (banErr) {
-                    reply = `🚨 @${targetUsername} exceeded 2 warnings, but ban failed: ${banErr.message}`;
+                  if (currentWarns > 2) {
+                    try {
+                      await aero.banMember(dockId, targetId);
+                      reply = `🚨 @${targetUsername} has been automatically banned. Reason: Exceeded 2 warnings (${reason}).`;
+                    } catch (banErr) {
+                      reply = `🚨 @${targetUsername} exceeded 2 warnings, but ban failed: ${banErr.message}`;
+                    }
+                  } else {
+                    reply = `⚠️ @${targetUsername} has been warned by admin for: ${reason}. Total warnings: ${currentWarns}/3.`;
                   }
                 } else {
-                  reply = `⚠️ @${targetUsername} has been warned by admin for: ${reason}. Total warnings: ${currentWarns}/3.`;
+                  groupSettings.warnings[targetId] = 0;
+                  saveGroupDb(db);
+                  reply = `✅ Warnings cleared for @${targetUsername}.`;
                 }
-              } else {
-                groupSettings.warnings[targetId] = 0;
-                saveGroupDb(db);
-                reply = `✅ Warnings cleared for @${targetUsername}.`;
               }
             }
           }
@@ -1583,24 +1594,26 @@ aero.onMessage(async (msg) => {
         reply = "❌ This command can only be used inside group chats.";
       } else {
         try {
-          await ensureMembersInDb(dockId, true); // Force sync for fresh admin list
+          const membersRes = await aero.getMembers(dockId, true);
+          const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
           
-          const ownerMember = Object.keys(groupSettings.members).find(uid => groupSettings.members[uid].role === "owner");
-          const adminMembers = Object.keys(groupSettings.members).filter(uid => {
-            const m = groupSettings.members[uid];
-            return (m.isAdmin || m.role === "admin") && m.role !== "owner";
-          });
+          const ownerMember = members.find(m => m.role === "owner");
+          const adminMembers = members.filter(m => (m.role === "admin" || m.isAdmin === true) && m.role !== "owner");
           
           let ownerText = "";
           if (ownerMember) {
-            ownerText = `👑 Owner: @${groupSettings.members[ownerMember].username}\n`;
+            const ownerUsername = ownerMember.user?.username || ownerMember.user?.mention || ownerMember.user?.displayName || "User";
+            ownerText = `👑 Owner: @${ownerUsername}\n`;
           } else {
             ownerText = `👑 Owner: Not found\n`;
           }
           
           let adminsText = "";
           if (adminMembers.length > 0) {
-            adminsText = `👮 Admins:\n` + adminMembers.map(uid => `• @${groupSettings.members[uid].username}`).join("\n");
+            adminsText = `👮 Admins:\n` + adminMembers.map(m => {
+              const uName = m.user?.username || m.user?.mention || m.user?.displayName || "User";
+              return `• @${uName}`;
+            }).join("\n");
           } else {
             adminsText = `👮 Admins: None`;
           }
@@ -1657,7 +1670,7 @@ aero.onMessage(async (msg) => {
             })();
             reply = null;
           } else {
-            reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
+            reply = bot.handleMessage({ text, sender: { id: senderId } }, context);
           }
         }
       }
@@ -1669,7 +1682,7 @@ aero.onMessage(async (msg) => {
       if (matchingCommand) {
         reply = matchingCommand.response;
       } else {
-        reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
+        reply = bot.handleMessage({ text, sender: { id: senderId } }, context);
       }
     }
   } else if (isMention) {
@@ -1694,7 +1707,7 @@ aero.onMessage(async (msg) => {
       reply = "Haan ji? Boliye, main aapki kya madad kar sakta hoon?";
     }
   } else {
-    reply = bot.handleMessage({ text, sender: { id: senderId } }, { ...context, adminIds });
+    reply = bot.handleMessage({ text, sender: { id: senderId } }, context);
   }
 
   if (reply) {
@@ -1913,11 +1926,13 @@ async function webhook(req) {
   const text = sanitizeText(body.text);
   const sender = body.member || body.sender || { id: "unknown" };
   const webhookDockId = body.groupId || "unknown";
+
+  // Note: adminIds are no longer cached. Admin checks are done per-command via single API call.
+
   const context = {
     enabled: body.enabled !== false,
     isGroup: true,
     groupName: body.groupName,
-    adminIds: body.adminIds || [],
     chatHistory: body.chatHistory || [],
     assistantOnly: assistantMode.nonDestructiveOnly,
     platformActions: {
@@ -1934,19 +1949,24 @@ async function webhook(req) {
             }
             const db = loadGroupDb();
             const groupSettings = getGroupSettings(db, webhookDockId);
-            await ensureMembersInDb(webhookDockId);
-            let targetMember = findMemberByUsername(groupSettings, targetUsername);
-            if (!targetMember) {
-              console.log(`[Webhook Kick] User @${targetUsername} not found in database members. Syncing...`);
-              await ensureMembersInDb(webhookDockId, true);
-              targetMember = findMemberByUsername(groupSettings, targetUsername);
+            let targetId = resolveMentionedUserId(body, targetUsername);
+            if (!targetId) {
+              console.log(`[Webhook Kick] User @${targetUsername} not found in mentions. Trying fallback database lookup...`);
+              await ensureMembersInDb(webhookDockId);
+              let targetMember = findMemberByUsername(groupSettings, targetUsername);
+              if (!targetMember) {
+                await refreshAdminsCache(webhookDockId);
+                targetMember = findMemberByUsername(groupSettings, targetUsername);
+              }
+              if (targetMember) {
+                targetId = targetMember.id;
+              }
             }
-            if (!targetMember) {
+            if (!targetId) {
               await aero.sendMessage(webhookDockId, `❌ Cannot kick @${targetUsername}: User not found in this group.`);
               return;
             }
-            const targetId = targetMember.id;
-            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+            const isTargetAdmin = isUserAdmin(webhookDockId, targetId);
             if (isTargetAdmin) {
               await aero.sendMessage(webhookDockId, `❌ Cannot perform moderation actions (kick) on other admins or the group owner.`);
               return;
@@ -1971,19 +1991,24 @@ async function webhook(req) {
             }
             const db = loadGroupDb();
             const groupSettings = getGroupSettings(db, webhookDockId);
-            await ensureMembersInDb(webhookDockId);
-            let targetMember = findMemberByUsername(groupSettings, targetUsername);
-            if (!targetMember) {
-              console.log(`[Webhook Ban] User @${targetUsername} not found in database members. Syncing...`);
-              await ensureMembersInDb(webhookDockId, true);
-              targetMember = findMemberByUsername(groupSettings, targetUsername);
+            let targetId = resolveMentionedUserId(body, targetUsername);
+            if (!targetId) {
+              console.log(`[Webhook Ban] User @${targetUsername} not found in mentions. Trying fallback database lookup...`);
+              await ensureMembersInDb(webhookDockId);
+              let targetMember = findMemberByUsername(groupSettings, targetUsername);
+              if (!targetMember) {
+                await refreshAdminsCache(webhookDockId);
+                targetMember = findMemberByUsername(groupSettings, targetUsername);
+              }
+              if (targetMember) {
+                targetId = targetMember.id;
+              }
             }
-            if (!targetMember) {
+            if (!targetId) {
               await aero.sendMessage(webhookDockId, `❌ Cannot ban @${targetUsername}: User not found in this group.`);
               return;
             }
-            const targetId = targetMember.id;
-            const isTargetAdmin = targetMember.role === "admin" || targetMember.isAdmin === true || targetMember.role === "owner" || targetId === "owner-1";
+            const isTargetAdmin = isUserAdmin(webhookDockId, targetId);
             if (isTargetAdmin) {
               await aero.sendMessage(webhookDockId, `❌ Cannot perform moderation actions (ban) on other admins or the group owner.`);
               return;
@@ -2010,24 +2035,48 @@ async function webhook(req) {
       const mId = sender.id || sender._id;
       
       if (mId && mId !== "unknown") {
+        const isAdmin = sender.role === "admin" || sender.role === "owner" || sender.isAdmin === true || body.role === "admin" || body.role === "owner";
+        
+        if (!adminsCache.has(webhookDockId)) {
+          adminsCache.set(webhookDockId, new Set());
+        }
+        const adminSet = adminsCache.get(webhookDockId);
+
         if (eventType === "member_join") {
-          groupSettings.members[mId] = {
-            username: sender.username || sender.mention || sender.displayName || "User",
-            role: sender.role || "member",
-            isAdmin: sender.role === "admin" || sender.role === "owner" || sender.isAdmin === true
-          };
-          console.log(`[Webhook] Added member ${sender.username || mId} to database for dock ${webhookDockId}`);
+          if (isAdmin) {
+            adminSet.add(mId);
+            delete groupSettings.members[mId];
+            console.log(`[Webhook] Added admin ${sender.username || mId} to cache for dock ${webhookDockId}`);
+          } else {
+            adminSet.delete(mId);
+            groupSettings.members[mId] = {
+              username: sender.username || sender.mention || sender.displayName || "User",
+              role: sender.role || "member",
+              isAdmin: false
+            };
+            console.log(`[Webhook] Added member ${sender.username || mId} to database for dock ${webhookDockId}`);
+          }
         } else if (eventType === "member_leave" || eventType === "member_left") {
           delete groupSettings.members[mId];
-          console.log(`[Webhook] Removed member ${mId} from database for dock ${webhookDockId}`);
+          adminSet.delete(mId);
+          console.log(`[Webhook] Removed user ${mId} from database and cache for dock ${webhookDockId}`);
         } else if (eventType === "role_change") {
           const newRole = body.role || sender.role || "member";
-          groupSettings.members[mId] = {
-            username: sender.username || sender.mention || sender.displayName || "User",
-            role: newRole,
-            isAdmin: newRole === "admin" || newRole === "owner" || sender.isAdmin === true
-          };
-          console.log(`[Webhook] Updated member ${sender.username || mId} role to ${newRole} in database for dock ${webhookDockId}`);
+          const isNewAdmin = newRole === "admin" || newRole === "owner" || sender.isAdmin === true;
+          
+          if (isNewAdmin) {
+            adminSet.add(mId);
+            delete groupSettings.members[mId];
+            console.log(`[Webhook] Promoted user ${sender.username || mId} to admin in cache for dock ${webhookDockId}`);
+          } else {
+            adminSet.delete(mId);
+            groupSettings.members[mId] = {
+              username: sender.username || sender.mention || sender.displayName || "User",
+              role: newRole,
+              isAdmin: false
+            };
+            console.log(`[Webhook] Demoted user ${sender.username || mId} to member in database for dock ${webhookDockId}`);
+          }
         }
         saveGroupDb(db);
       }
@@ -2260,11 +2309,10 @@ async function sendManualMessage(req) {
           let finalMessage = rawMessage;
           if (rawMessage.includes("@everyone")) {
             try {
-              await ensureMembersInDb(gid);
-              const db = loadGroupDb();
-              const gSettings = getGroupSettings(db, gid);
-              const mentionsList = Object.keys(gSettings.members)
-                .map(uid => gSettings.members[uid].username)
+              const membersRes = await aero.getMembers(gid);
+              const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+              const mentionsList = members
+                .map(m => m.user?.username || m.user?.mention || m.user?.displayName)
                 .filter(Boolean);
               if (mentionsList.length > 0) {
                 const cleanedText = rawMessage.replace(/@everyone/g, "").trim();
@@ -2405,11 +2453,10 @@ async function groupControlAction(req) {
           }
           successCount++;
         } else if (action === "mention_everyone") {
-          await ensureMembersInDb(gid);
-          const db = loadGroupDb();
-          const gSettings = getGroupSettings(db, gid);
-          const mentionsList = Object.keys(gSettings.members)
-            .map(uid => gSettings.members[uid].username)
+          const membersRes = await aero.getMembers(gid);
+          const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
+          const mentionsList = members
+            .map(m => m.user?.username || m.user?.mention || m.user?.displayName)
             .filter(Boolean);
           const mentionMsg = mentionsList.length > 0
             ? `📢 @everyone Attention!\n\nMentions: ${mentionsList.map(name => `@${name}`).join(" ")}`
