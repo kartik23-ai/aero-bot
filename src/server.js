@@ -1190,6 +1190,7 @@ aero.onMessage(async (msg) => {
               await aero.sendMessage(dockId, `❌ Cannot ban admins or the group owner.`);
               return;
             }
+            await aero.banMember(dockId, targetId);
             // Invalidate docks cache so next check is fresh
             lastDocksFetchTime = 0;
             if (!groupSettings.members) groupSettings.members = {};
