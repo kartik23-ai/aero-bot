@@ -55,8 +55,7 @@ const ai = new AiAssistant({ model: config.aiModel });
 let lastDocksFetchTime = 0;
 let inFlightDocksFetch = null;
 
-// Local cache for resolved admin usernames: userId -> username
-const adminUsernamesCache = new Map();
+
 
 // Helper to refresh docks list lazily with coalescing
 async function refreshDocksIfNeeded(force = false) {
@@ -246,37 +245,7 @@ async function checkIsAdmin(dockId, userId) {
   }
 }
 
-/**
- * Helper to get admin usernames for display (e.g. /admins command).
- * Resolves profiles individually using GET /users/{userId} (zero member lists fetched) and caches them.
- */
-async function getAdminUsernames(dock) {
-  const ids = [dock.creatorId, ...(dock.admins || [])].filter(Boolean);
-  const uniqueIds = [...new Set(ids)];
-  const result = { owner: "Not found", admins: [] };
 
-  for (const id of uniqueIds) {
-    let uName = adminUsernamesCache.get(id);
-    if (!uName) {
-      try {
-        console.log(`[AdminCheck] Fetching profile for admin ${id}...`);
-        const user = await aero._get(`/users/${id}`);
-        uName = user.username || user.fullName || "User";
-        adminUsernamesCache.set(id, uName);
-      } catch (err) {
-        console.error(`[AdminCheck] Failed to resolve username for admin ${id}:`, err.message);
-        uName = `User (${id.substring(0, 6)})`;
-      }
-    }
-
-    if (id === dock.creatorId) {
-      result.owner = uName;
-    } else {
-      result.admins.push(uName);
-    }
-  }
-  return result;
-}
 
 function resolveMentionedUserId(msg, targetUsername) {
   if (!targetUsername) return null;
@@ -1094,8 +1063,7 @@ aero.onMessage(async (msg) => {
 
   // Determine if we need to check admin roles
   const cmdName = parsedCmd?.name;
-  const isAdminCmd = ["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
-  const isListAdminsCmd = ["admin", "admins"].includes(cmdName);
+  const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
 
   // Bot must be an admin/owner to process moderation or check roles
   let isBotAdmin = targetDock && (targetDock.role === "admin" || targetDock.role === "owner");
@@ -1127,7 +1095,7 @@ aero.onMessage(async (msg) => {
   if (senderId === "owner-1") {
     isSenderOwner = true;
     isSenderAdmin = true;
-  } else if (isGroup && (isAdminCmd || isListAdminsCmd)) {
+  } else if (isGroup && isAdminCmd) {
     // Only call API when command actually needs admin check
     isSenderAdmin = await checkIsAdmin(dockId, senderId);
     console.log(`[AdminCheck] Sender ${senderId} in dock ${dockId}: isAdmin=${isSenderAdmin}`);
@@ -1622,32 +1590,7 @@ aero.onMessage(async (msg) => {
       } else {
         reply = "❌ You don't have any pending report to cancel.";
       }
-    } else if (["admin", "admins"].includes(cmdName)) {
-      if (!isGroup) {
-        reply = "❌ This command can only be used inside group chats.";
-      } else {
-        try {
-          await refreshDocksIfNeeded();
-          let dock = aero.docks.find(d => d.id === dockId);
-          if (!dock) {
-            await refreshDocksIfNeeded(true);
-            dock = aero.docks.find(d => d.id === dockId);
-          }
-          if (!dock) {
-            reply = "❌ Failed to fetch admins list: Group not found in cache.";
-          } else {
-            const adminInfo = await getAdminUsernames(dock);
-            const ownerText = `👑 Owner: @${adminInfo.owner}\n`;
-            const adminsText = adminInfo.admins.length > 0
-              ? `👮 Admins:\n` + adminInfo.admins.map(name => `• @${name}`).join("\n")
-              : `👮 Admins: None`;
-            reply = `📋 **Group Administration**\n\n${ownerText}\n${adminsText}`;
-          }
-        } catch (err) {
-          console.error("[Admins Command Error]:", err.message);
-          reply = `❌ Failed to fetch admins list: ${err.message}`;
-        }
-      }
+
     } else if (["summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName)) {
       if (!isSenderAdmin) {
         reply = "Permission denied. Admin only.";
@@ -1694,7 +1637,7 @@ aero.onMessage(async (msg) => {
             })();
             reply = null;
           } else {
-            reply = bot.handleMessage({ text, sender: { id: senderId } }, context);
+            reply = bot.handleMessage({ text, sender: { id: senderId, permissionLevel: isSenderAdmin ? "ADMIN" : "USER" } }, context);
           }
         }
       }
@@ -1706,7 +1649,7 @@ aero.onMessage(async (msg) => {
       if (matchingCommand) {
         reply = matchingCommand.response;
       } else {
-        reply = bot.handleMessage({ text, sender: { id: senderId } }, context);
+        reply = bot.handleMessage({ text, sender: { id: senderId, permissionLevel: isSenderAdmin ? "ADMIN" : "USER" } }, context);
       }
     }
   } else if (isMention) {
@@ -1731,7 +1674,7 @@ aero.onMessage(async (msg) => {
       reply = "Haan ji? Boliye, main aapki kya madad kar sakta hoon?";
     }
   } else {
-    reply = bot.handleMessage({ text, sender: { id: senderId } }, context);
+    reply = bot.handleMessage({ text, sender: { id: senderId, permissionLevel: isSenderAdmin ? "ADMIN" : "USER" } }, context);
   }
 
   if (reply) {
@@ -2112,6 +2055,21 @@ async function webhook(req) {
   }
 
   if (eventType === "message" || eventType === "newMessage") {
+    const senderId = sender.id || sender._id || "unknown";
+    const senderName = sender.username || sender.displayName || "User";
+    const parsedCmd = bot.parseCommand(text || "");
+    
+    let isSenderAdmin = false;
+    if (senderId === "owner-1") {
+      isSenderAdmin = true;
+    } else if (webhookDockId !== "unknown" && parsedCmd) {
+      const cmdName = parsedCmd.name;
+      const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
+      if (isAdminCmd) {
+        isSenderAdmin = await checkIsAdmin(webhookDockId, senderId);
+      }
+    }
+
     const botMentionText = bot.botMention.toLowerCase();
     const lowerText = (text || "").toLowerCase();
     
@@ -2139,8 +2097,6 @@ async function webhook(req) {
       isMention = false;
     }
 
-    const parsedCmd = bot.parseCommand(text || "");
-
     let reply = null;
 
     if (isMention && !parsedCmd) {
@@ -2150,7 +2106,7 @@ async function webhook(req) {
 
       if (question) {
         try {
-          const senderName = sender.username || sender.displayName || "User";
+          // senderName is already defined at event block top
           reply = await ai.answer({
             text: question,
             rules: bot.config.rules,
@@ -2171,8 +2127,7 @@ async function webhook(req) {
       if (parsedCmd) {
         const cmdName = parsedCmd.name;
         const argsText = parsedCmd.argsText || "";
-        const senderId = sender.id || sender._id || "unknown";
-        const senderName = sender.username || sender.displayName || "User";
+        // senderId and senderName are already defined at event block top
 
         if (cmdName === "report") {
           const reason = argsText || "";
@@ -2253,7 +2208,7 @@ async function webhook(req) {
         }
       }
       if (!reply) {
-        reply = bot.handleMessage({ text, sender: { id: sender.id || sender._id || "unknown" } }, context);
+        reply = bot.handleMessage({ text, sender: { id: senderId, permissionLevel: isSenderAdmin ? "ADMIN" : "USER" } }, context);
       }
     }
 
