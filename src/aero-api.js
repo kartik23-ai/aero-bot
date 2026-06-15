@@ -120,28 +120,8 @@ class AeroAPI {
    */
   async fetchDock(dockId) {
     try {
-      const d = await this._get(`/docks/${dockId}`);
-      if (d) {
-        const mapped = {
-          id: d._id || d.id,
-          name: d.name,
-          members: d.memberCount || d.members || 0,
-          memberCount: d.memberCount || d.members || 0,
-          role: d.role || "member",
-          type: d.type || "group",
-          icon: d.icon || null,
-          language: "en",
-          status: "enabled",
-          botEnabled: true
-        };
-        const index = this.docks.findIndex(dock => dock.id === dockId);
-        if (index >= 0) {
-          this.docks[index] = mapped;
-        } else {
-          this.docks.push(mapped);
-        }
-        return mapped;
-      }
+      await this.fetchDocks();
+      return this.docks.find(d => d.id === dockId) || null;
     } catch (err) {
       console.error(`[AeroAPI] Failed to fetch single dock ${dockId}:`, err.message);
     }
@@ -165,7 +145,9 @@ class AeroAPI {
           icon: d.icon || null,
           language: "en",
           status: "enabled",
-          botEnabled: true
+          botEnabled: true,
+          admins: d.admins || [],
+          creatorId: d.creatorId || null
         }));
       } else if (data && data.docks) {
         this.docks = data.docks.map(d => ({
@@ -178,7 +160,9 @@ class AeroAPI {
           icon: d.icon || null,
           language: "en",
           status: "enabled",
-          botEnabled: true
+          botEnabled: true,
+          admins: d.admins || [],
+          creatorId: d.creatorId || null
         }));
       }
     } catch (err) {
@@ -340,41 +324,8 @@ class AeroAPI {
    * Fetch members of a dock with a 30-second caching mechanism to optimize CPU/Network
    */
   async getMembers(dockId, forceRefresh = false) {
-    if (!this._membersCache) {
-      this._membersCache = new Map();
-    }
-    if (!this._pendingMembers) {
-      this._pendingMembers = new Map();
-    }
-    const now = Date.now();
-    if (!forceRefresh) {
-      const cached = this._membersCache.get(dockId);
-      if (cached && (now - cached.timestamp < 900000)) {
-        return cached.data;
-      }
-    }
-    if (this._pendingMembers.has(dockId)) {
-      return this._pendingMembers.get(dockId);
-    }
-    const promise = (async () => {
-      try {
-        const data = await this._get(`/docks/${dockId}/members`);
-        this._membersCache.set(dockId, { data, timestamp: Date.now() });
-        return data;
-      } catch (err) {
-        console.error(`[AeroAPI] Failed to fetch members for ${dockId}:`, err.message);
-        const cached = this._membersCache.get(dockId);
-        if (cached) {
-          console.log(`[AeroAPI] Returning stale member cache for ${dockId} as fallback.`);
-          return cached.data;
-        }
-        throw err;
-      } finally {
-        this._pendingMembers.delete(dockId);
-      }
-    })();
-    this._pendingMembers.set(dockId, promise);
-    return promise;
+    console.warn(`[AeroAPI] WARNING: getMembers called for dock ${dockId}. Member list downloads are fully excluded! Returning empty list.`);
+    return [];
   }
 
   /**

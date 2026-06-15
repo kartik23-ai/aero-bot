@@ -51,8 +51,35 @@ const { AeroAPI } = require("./aero-api");
 const aero = new AeroAPI();
 const bot = new AeroGroupGuard({ ownerId: "owner-1", botMention: "@AeroGroupGuard", prefix: "@" });
 const ai = new AiAssistant({ model: config.aiModel });
+// Cache to track when docks were last fetched to throttle API requests (5s lifetime)
+let lastDocksFetchTime = 0;
+let inFlightDocksFetch = null;
 
-// No admins cache — admin status is checked per-command via single API call
+// Local cache for resolved admin usernames: userId -> username
+const adminUsernamesCache = new Map();
+
+// Helper to refresh docks list lazily with coalescing
+async function refreshDocksIfNeeded(force = false) {
+  const now = Date.now();
+  const cacheLifetime = 5000; // 5 seconds cache
+  
+  if (force || !lastDocksFetchTime || (now - lastDocksFetchTime) > cacheLifetime) {
+    if (inFlightDocksFetch) {
+      console.log(`[DocksCache] Reusing in-flight docks fetch...`);
+      await inFlightDocksFetch;
+      return;
+    }
+    
+    console.log(`[DocksCache] Refreshing docks metadata from server...`);
+    inFlightDocksFetch = aero.fetchDocks();
+    try {
+      await inFlightDocksFetch;
+      lastDocksFetchTime = Date.now();
+    } finally {
+      inFlightDocksFetch = null;
+    }
+  }
+}
 
 // Initialize Firebase connection if key exists
 let firestoreDb = null;
@@ -202,21 +229,53 @@ function getGroupSettings(db, dockId) {
   return g;
 }
 
-/**
- * Check if a user is an admin in a specific dock.
- * Makes ONE API call for ONLY that user — never fetches full member list.
- */
 async function checkIsAdmin(dockId, userId) {
   if (!userId || !dockId) return false;
   if (userId === "owner-1") return true;
+
   try {
-    const member = await aero.getMember(dockId, userId);
-    if (!member) return false;
-    return member.role === "admin" || member.role === "owner" || member.isAdmin === true;
+    await refreshDocksIfNeeded();
+    const dock = aero.docks.find(d => d.id === dockId);
+    if (!dock) return false;
+    
+    return dock.creatorId === userId || (dock.admins && dock.admins.includes(userId));
   } catch (err) {
     console.error(`[AdminCheck] Failed to check admin status for ${userId} in ${dockId}:`, err.message);
-    return false;
+    const dock = aero.docks.find(d => d.id === dockId);
+    return dock ? (dock.creatorId === userId || (dock.admins && dock.admins.includes(userId))) : false;
   }
+}
+
+/**
+ * Helper to get admin usernames for display (e.g. /admins command).
+ * Resolves profiles individually using GET /users/{userId} (zero member lists fetched) and caches them.
+ */
+async function getAdminUsernames(dock) {
+  const ids = [dock.creatorId, ...(dock.admins || [])].filter(Boolean);
+  const uniqueIds = [...new Set(ids)];
+  const result = { owner: "Not found", admins: [] };
+
+  for (const id of uniqueIds) {
+    let uName = adminUsernamesCache.get(id);
+    if (!uName) {
+      try {
+        console.log(`[AdminCheck] Fetching profile for admin ${id}...`);
+        const user = await aero._get(`/users/${id}`);
+        uName = user.username || user.fullName || "User";
+        adminUsernamesCache.set(id, uName);
+      } catch (err) {
+        console.error(`[AdminCheck] Failed to resolve username for admin ${id}:`, err.message);
+        uName = `User (${id.substring(0, 6)})`;
+      }
+    }
+
+    if (id === dock.creatorId) {
+      result.owner = uName;
+    } else {
+      result.admins.push(uName);
+    }
+  }
+  return result;
 }
 
 function resolveMentionedUserId(msg, targetUsername) {
@@ -1156,21 +1215,15 @@ aero.onMessage(async (msg) => {
               return;
             }
 
-            // Verify target is actually in this dock (single API call)
-            const targetMemberData = await aero.getMember(dockId, targetId);
-            if (!targetMemberData) {
-              await aero.sendMessage(dockId, `❌ Cannot ban @${targetUsername}: User is not a member of this dock.`);
-              return;
-            }
-
-            // Check if target is admin — use already-fetched data
-            const isTargetAdmin = targetMemberData.role === "admin" || targetMemberData.role === "owner" || targetMemberData.isAdmin === true;
+            // If userId resolved from @mention, user is confirmed in dock (Aero only sends mentions for dock members)
+            // Check if target is admin — uses 60s cache, no extra API call if cache is fresh
+            const isTargetAdmin = await checkIsAdmin(dockId, targetId);
             if (isTargetAdmin) {
               await aero.sendMessage(dockId, `❌ Cannot ban admins or the group owner.`);
               return;
             }
-            await aero.banMember(dockId, targetId);
-            // Remove from local DB after ban
+            // Invalidate docks cache so next check is fresh
+            lastDocksFetchTime = 0;
             if (!groupSettings.members) groupSettings.members = {};
             delete groupSettings.members[targetId];
             saveGroupDb(db);
@@ -1387,22 +1440,7 @@ aero.onMessage(async (msg) => {
                 } else if (!argsText) {
                   reply = "Please specify the announcement message. E.g. /announce Hello everyone!";
                 } else {
-                  let finalMessage = argsText;
-                  if (argsText.includes("@everyone")) {
-                    try {
-                      const membersRes = await aero.getMembers(dockId);
-                      const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
-                      const mentionsList = members
-                        .map(m => m.user?.username || m.user?.mention || m.user?.displayName)
-                        .filter(Boolean);
-                      if (mentionsList.length > 0) {
-                        const cleanedText = argsText.replace(/@everyone/g, "").trim();
-                        finalMessage = `${cleanedText}\n\n🔔 Mentions: ${mentionsList.map(name => `@${name}`).join(" ")}`;
-                      }
-                    } catch (err) {
-                      console.error("[Announce Mentions Error]:", err.message);
-                    }
-                  }
+                  const finalMessage = argsText;
                   
                   const announceMsg = formatAnnouncement(finalMessage, msg.sender?.username || "Owner");
                   
@@ -1460,36 +1498,31 @@ aero.onMessage(async (msg) => {
             if (!targetId) {
               reply = `❌ User @${targetUsername} not found. Please use @mention when running /${cmdName}.`;
             } else {
-              // Single API call for ONLY this user — check membership + role
-              const targetMemberData = await aero.getMember(dockId, targetId);
-              if (!targetMemberData) {
-                reply = `❌ @${targetUsername} is not a member of this dock.`;
-              } else {
-                const isTargetAdmin = targetMemberData.role === "admin" || targetMemberData.role === "owner" || targetMemberData.isAdmin === true || targetId === "owner-1";
-                if (isTargetAdmin && cmdName === "warn") {
-                  reply = `❌ Cannot warn admins or the group owner.`;
-                } else if (cmdName === "warn") {
-                  const reason = parts.slice(1).join(" ") || "No reason provided.";
-                  if (!groupSettings.warnings[targetId]) groupSettings.warnings[targetId] = 0;
-                  groupSettings.warnings[targetId]++;
-                  const currentWarns = groupSettings.warnings[targetId];
-                  saveGroupDb(db);
+              // Check if target is admin — uses 60s cache, no extra API call if cache is fresh
+              const isTargetAdmin = await checkIsAdmin(dockId, targetId) || targetId === "owner-1";
+              if (isTargetAdmin && cmdName === "warn") {
+                reply = `❌ Cannot warn admins or the group owner.`;
+              } else if (cmdName === "warn") {
+                const reason = parts.slice(1).join(" ") || "No reason provided.";
+                if (!groupSettings.warnings[targetId]) groupSettings.warnings[targetId] = 0;
+                groupSettings.warnings[targetId]++;
+                const currentWarns = groupSettings.warnings[targetId];
+                saveGroupDb(db);
 
-                  if (currentWarns > 2) {
-                    try {
-                      await aero.banMember(dockId, targetId);
-                      reply = `🚨 @${targetUsername} has been automatically banned. Reason: Exceeded 2 warnings (${reason}).`;
-                    } catch (banErr) {
-                      reply = `🚨 @${targetUsername} exceeded 2 warnings, but ban failed: ${banErr.message}`;
-                    }
-                  } else {
-                    reply = `⚠️ @${targetUsername} has been warned by admin for: ${reason}. Total warnings: ${currentWarns}/3.`;
+                if (currentWarns > 2) {
+                  try {
+                    await aero.banMember(dockId, targetId);
+                    reply = `🚨 @${targetUsername} has been automatically banned. Reason: Exceeded 2 warnings (${reason}).`;
+                  } catch (banErr) {
+                    reply = `🚨 @${targetUsername} exceeded 2 warnings, but ban failed: ${banErr.message}`;
                   }
                 } else {
-                  groupSettings.warnings[targetId] = 0;
-                  saveGroupDb(db);
-                  reply = `✅ Warnings cleared for @${targetUsername}.`;
+                  reply = `⚠️ @${targetUsername} has been warned by admin for: ${reason}. Total warnings: ${currentWarns}/3.`;
                 }
+              } else {
+                groupSettings.warnings[targetId] = 0;
+                saveGroupDb(db);
+                reply = `✅ Warnings cleared for @${targetUsername}.`;
               }
             }
           }
@@ -1594,31 +1627,22 @@ aero.onMessage(async (msg) => {
         reply = "❌ This command can only be used inside group chats.";
       } else {
         try {
-          const membersRes = await aero.getMembers(dockId, true);
-          const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
-          
-          const ownerMember = members.find(m => m.role === "owner");
-          const adminMembers = members.filter(m => (m.role === "admin" || m.isAdmin === true) && m.role !== "owner");
-          
-          let ownerText = "";
-          if (ownerMember) {
-            const ownerUsername = ownerMember.user?.username || ownerMember.user?.mention || ownerMember.user?.displayName || "User";
-            ownerText = `👑 Owner: @${ownerUsername}\n`;
-          } else {
-            ownerText = `👑 Owner: Not found\n`;
+          await refreshDocksIfNeeded();
+          let dock = aero.docks.find(d => d.id === dockId);
+          if (!dock) {
+            await refreshDocksIfNeeded(true);
+            dock = aero.docks.find(d => d.id === dockId);
           }
-          
-          let adminsText = "";
-          if (adminMembers.length > 0) {
-            adminsText = `👮 Admins:\n` + adminMembers.map(m => {
-              const uName = m.user?.username || m.user?.mention || m.user?.displayName || "User";
-              return `• @${uName}`;
-            }).join("\n");
+          if (!dock) {
+            reply = "❌ Failed to fetch admins list: Group not found in cache.";
           } else {
-            adminsText = `👮 Admins: None`;
+            const adminInfo = await getAdminUsernames(dock);
+            const ownerText = `👑 Owner: @${adminInfo.owner}\n`;
+            const adminsText = adminInfo.admins.length > 0
+              ? `👮 Admins:\n` + adminInfo.admins.map(name => `• @${name}`).join("\n")
+              : `👮 Admins: None`;
+            reply = `📋 **Group Administration**\n\n${ownerText}\n${adminsText}`;
           }
-          
-          reply = `📋 **Group Administration**\n\n${ownerText}\n${adminsText}`;
         } catch (err) {
           console.error("[Admins Command Error]:", err.message);
           reply = `❌ Failed to fetch admins list: ${err.message}`;
@@ -2037,18 +2061,14 @@ async function webhook(req) {
       if (mId && mId !== "unknown") {
         const isAdmin = sender.role === "admin" || sender.role === "owner" || sender.isAdmin === true || body.role === "admin" || body.role === "owner";
         
-        if (!adminsCache.has(webhookDockId)) {
-          adminsCache.set(webhookDockId, new Set());
-        }
-        const adminSet = adminsCache.get(webhookDockId);
+        // Invalidate docks cache so next check is fresh
+        lastDocksFetchTime = 0;
 
         if (eventType === "member_join") {
           if (isAdmin) {
-            adminSet.add(mId);
             delete groupSettings.members[mId];
-            console.log(`[Webhook] Added admin ${sender.username || mId} to cache for dock ${webhookDockId}`);
+            console.log(`[Webhook] Admin ${sender.username || mId} joined dock ${webhookDockId}`);
           } else {
-            adminSet.delete(mId);
             groupSettings.members[mId] = {
               username: sender.username || sender.mention || sender.displayName || "User",
               role: sender.role || "member",
@@ -2058,18 +2078,15 @@ async function webhook(req) {
           }
         } else if (eventType === "member_leave" || eventType === "member_left") {
           delete groupSettings.members[mId];
-          adminSet.delete(mId);
-          console.log(`[Webhook] Removed user ${mId} from database and cache for dock ${webhookDockId}`);
+          console.log(`[Webhook] Removed user ${mId} from database for dock ${webhookDockId}`);
         } else if (eventType === "role_change") {
           const newRole = body.role || sender.role || "member";
           const isNewAdmin = newRole === "admin" || newRole === "owner" || sender.isAdmin === true;
           
           if (isNewAdmin) {
-            adminSet.add(mId);
             delete groupSettings.members[mId];
-            console.log(`[Webhook] Promoted user ${sender.username || mId} to admin in cache for dock ${webhookDockId}`);
+            console.log(`[Webhook] Promoted user ${sender.username || mId} to admin for dock ${webhookDockId}`);
           } else {
-            adminSet.delete(mId);
             groupSettings.members[mId] = {
               username: sender.username || sender.mention || sender.displayName || "User",
               role: newRole,
@@ -2306,23 +2323,7 @@ async function sendManualMessage(req) {
       try {
         let messageToSend = rawMessage;
         if (isAnnouncement) {
-          let finalMessage = rawMessage;
-          if (rawMessage.includes("@everyone")) {
-            try {
-              const membersRes = await aero.getMembers(gid);
-              const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
-              const mentionsList = members
-                .map(m => m.user?.username || m.user?.mention || m.user?.displayName)
-                .filter(Boolean);
-              if (mentionsList.length > 0) {
-                const cleanedText = rawMessage.replace(/@everyone/g, "").trim();
-                finalMessage = `${cleanedText}\n\n🔔 Mentions: ${mentionsList.map(name => `@${name}`).join(" ")}`;
-              }
-            } catch (err) {
-              console.error(`[Portal Announce Mentions Error for ${gid}]:`, err.message);
-            }
-          }
-          messageToSend = formatAnnouncement(finalMessage, "yamdut (Dashboard)");
+          messageToSend = formatAnnouncement(rawMessage, "yamdut (Dashboard)");
         }
         await aero.sendMessage(gid, messageToSend);
         sent++;
@@ -2453,16 +2454,9 @@ async function groupControlAction(req) {
           }
           successCount++;
         } else if (action === "mention_everyone") {
-          const membersRes = await aero.getMembers(gid);
-          const members = Array.isArray(membersRes) ? membersRes : (membersRes?.members || []);
-          const mentionsList = members
-            .map(m => m.user?.username || m.user?.mention || m.user?.displayName)
-            .filter(Boolean);
-          const mentionMsg = mentionsList.length > 0
-            ? `📢 @everyone Attention!\n\nMentions: ${mentionsList.map(name => `@${name}`).join(" ")}`
-            : `📢 @everyone Attention! (No members found)`;
+          const mentionMsg = `📢 @everyone Attention! (Individual tags disabled for group safety and resource optimization)`;
           await aero.sendMessage(gid, mentionMsg);
-          output += `Group (${gid}): Mention everyone sent to chat.\n`;
+          output += `Group (${gid}): Generic mention everyone sent to chat.\n`;
           successCount++;
         } else if (action === "lock") {
           bot.config.locked = true;
