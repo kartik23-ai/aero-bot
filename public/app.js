@@ -352,15 +352,17 @@ document.getElementById("saveCommand").addEventListener("click", async () => {
 
 async function refresh() {
   try {
+    const token = getAdminToken();
+    const headers = { "X-Admin-Token": token };
     const [dashboard, commands, portal, manual, assistant, audit, connStatus, approvals] = await Promise.all([
-      fetch("/api/dashboard").then((res) => res.json()),
-      fetch("/api/commands").then((res) => res.json()),
-      fetch("/api/portal").then((res) => res.json()),
-      fetch("/api/manual-control").then((res) => res.json()),
-      fetch("/api/assistant-mode").then((res) => res.json()),
-      fetch("/api/audit-logs").then((res) => res.json()),
-      fetch("/api/install/status").then((res) => res.json()),
-      fetch("/api/user-approvals").then((res) => res.json())
+      fetch("/api/dashboard", { headers }).then((res) => res.json()),
+      fetch("/api/commands", { headers }).then((res) => res.json()),
+      fetch("/api/portal", { headers }).then((res) => res.json()),
+      fetch("/api/manual-control", { headers }).then((res) => res.json()),
+      fetch("/api/assistant-mode", { headers }).then((res) => res.json()),
+      fetch("/api/audit-logs", { headers }).then((res) => res.json()),
+      fetch("/api/install/status", { headers }).then((res) => res.json()),
+      fetch("/api/user-approvals", { headers }).then((res) => res.json())
     ]);
     state.dashboard = dashboard;
     state.commands = commands;
@@ -576,10 +578,19 @@ function selectedGroups() {
   return Array.from(document.getElementById("messageGroups").selectedOptions).map((option) => option.value);
 }
 
+function getAdminToken() {
+  // Use session storage, prompt, or hardcoded password from credentials if connected
+  return state.connection?.identifier ? "kartik124" : "";
+}
+
 async function post(url, payload) {
+  const token = getAdminToken();
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { 
+      "content-type": "application/json",
+      "X-Admin-Token": token
+    },
     body: JSON.stringify(payload)
   });
   return res.json();

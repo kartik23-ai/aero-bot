@@ -1727,6 +1727,23 @@ const routes = {
   "POST /api/user-approvals/reject": rejectUser
 };
 
+function verifyDashboardAuth(req) {
+  const expectedPassword = process.env.DASHBOARD_PASSWORD || process.env.AERO_PASSWORD;
+  if (!expectedPassword) {
+    return true; // allow if no password configured (dev mode)
+  }
+  const authHeader = req.headers["authorization"] || req.headers["x-admin-token"];
+  let token = "";
+  if (authHeader) {
+    if (authHeader.startsWith("Bearer ")) {
+      token = authHeader.substring(7).trim();
+    } else {
+      token = authHeader.trim();
+    }
+  }
+  return token === expectedPassword;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     console.log(`[REQUEST] ${req.method} ${req.url}`);
@@ -1735,7 +1752,15 @@ const server = http.createServer(async (req, res) => {
 
     const url = new URL(req.url, `http://${req.headers.host}`);
     const route = routes[`${req.method} ${url.pathname}`];
-    if (route) return send(res, await route(req, url));
+    if (route) {
+      if (url.pathname !== "/api/health") {
+        if (!verifyDashboardAuth(req)) {
+          console.warn(`[Auth] Unauthorized access attempt to ${req.method} ${url.pathname} from IP ${ip}`);
+          return send(res, json(401, { error: "Unauthorized. Invalid admin token." }));
+        }
+      }
+      return send(res, await route(req, url));
+    }
     return serveStatic(res, url.pathname);
   } catch (error) {
     logger.error("request_failed", { error: error.message });
@@ -1934,7 +1959,7 @@ async function webhook(req) {
               await aero.sendMessage(webhookDockId, `❌ Cannot kick @${targetUsername}: User not found in this group.`);
               return;
             }
-            const isTargetAdmin = isUserAdmin(webhookDockId, targetId);
+            const isTargetAdmin = await checkIsAdmin(webhookDockId, targetId);
             if (isTargetAdmin) {
               await aero.sendMessage(webhookDockId, `❌ Cannot perform moderation actions (kick) on other admins or the group owner.`);
               return;
@@ -1976,7 +2001,7 @@ async function webhook(req) {
               await aero.sendMessage(webhookDockId, `❌ Cannot ban @${targetUsername}: User not found in this group.`);
               return;
             }
-            const isTargetAdmin = isUserAdmin(webhookDockId, targetId);
+            const isTargetAdmin = await checkIsAdmin(webhookDockId, targetId);
             if (isTargetAdmin) {
               await aero.sendMessage(webhookDockId, `❌ Cannot perform moderation actions (ban) on other admins or the group owner.`);
               return;
