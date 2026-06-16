@@ -1188,6 +1188,7 @@ aero.onMessage(async (msg) => {
             if (!groupSettings.members) groupSettings.members = {};
             delete groupSettings.members[targetId];
             saveGroupDb(db);
+            await aero.sendMessage(dockId, `✅ @${targetUsername} has been kicked.`);
           } catch (err) {
             console.error(`[PlatformAction] Kick failed for @${targetUsername}:`, err.message);
             await aero.sendMessage(dockId, `❌ Kick failed for @${targetUsername}: ${err.message}`);
@@ -1235,6 +1236,7 @@ aero.onMessage(async (msg) => {
             if (!groupSettings.members) groupSettings.members = {};
             delete groupSettings.members[targetId];
             saveGroupDb(db);
+            await aero.sendMessage(dockId, `✅ @${targetUsername} has been banned.`);
           } catch (err) {
             console.error(`[PlatformAction] Ban failed for @${targetUsername}:`, err.message);
             await aero.sendMessage(dockId, `❌ Ban failed for @${targetUsername}: ${err.message}`);
@@ -1738,6 +1740,11 @@ aero.onMessage(async (msg) => {
     }
   } else {
     reply = bot.handleMessage({ text, sender: { id: senderId, permissionLevel: isSenderAdmin ? "ADMIN" : "USER" } }, context);
+  }
+
+  // Nullify reply for kick and ban commands to prevent duplicate/race messages
+  if (parsedCmd && ["kick", "ban"].includes(parsedCmd.name)) {
+    reply = null;
   }
 
   if (reply) {
@@ -2297,6 +2304,9 @@ async function webhook(req) {
       }
       if (!reply) {
         reply = bot.handleMessage({ text, sender: { id: senderId, permissionLevel: isSenderAdmin ? "ADMIN" : "USER" } }, context);
+        if (parsedCmd && ["kick", "ban"].includes(parsedCmd.name)) {
+          reply = null;
+        }
       }
     }
 
