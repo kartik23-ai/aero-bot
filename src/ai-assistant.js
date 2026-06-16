@@ -19,11 +19,20 @@ class AiAssistant {
     if (process.env.GROQ_API_KEY) {
       keys = process.env.GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
     }
-    if (keys.length === 0) {
-      keys = [
-        "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",
-        "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"
-      ];
+    
+    // Fallback verified working keys
+    const fallbackKeys = [
+      "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",
+      "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",
+      "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",
+      "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",
+      "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"
+    ];
+    
+    for (const key of fallbackKeys) {
+      if (!keys.includes(key)) {
+        keys.push(key);
+      }
     }
     this.keys = keys;
     this.currentKeyIndex = 0;
