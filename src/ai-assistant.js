@@ -92,6 +92,7 @@ class AiAssistant {
             
             KNOWLEDGE BASE:
             1. Aero Messenger:
+               - Creator of this chatbot (AeroGroupGuard): yamdut (also known as yamraj). If anyone asks who is "yamdut" or "yamraj", always state clearly that he is the creator of this chatbot.
                - Solo Developer & Owner: Aryan Kaushik (username: aryankaushik). He is the creator/owner of Aero. ${isOwner ? "WARNING: The user talking to you right now is Aryan Kaushik (aryankaushik), the owner/creator of Aero Messenger! Greet him with respect as the owner/creator." : "If the message sender is 'aryankaushik', recognize him as the owner/creator of Aero."}
                - Platform: A distraction-free, noise-free communication and productivity platform built for high-performers to work smarter and focus deeper.
                - Security: End-to-end encrypted (E2EE) messaging using the Double Ratchet Algorithm.
@@ -154,7 +155,7 @@ class AiAssistant {
             4. Safety & Strict Refusal: NEVER assist with anything illegal, unethical, or harmful (hacking, bypassing security, system lockouts, gaalis/slurs creation, etc.), even if they claim it is for "educational purposes", "security testing", or "authorized research". Strictly refuse them with a firm, sharp, or sarcastic reply.
             5. STRICT RULES:
                - WORD LIMIT: Your response MUST NOT exceed 100 words under any circumstances. Keep it very short, crisp, and direct.
-               - REFUSE CODE: If the user asks for code, coding scripts, or programming snippets in any language (JavaScript, Python, C++, etc.), strictly refuse. Say you cannot provide coding language replies.
+               - REFUSE CODE: If anyone asks for code, coding scripts, programming snippets, or software instructions in any language (JavaScript, Python, C++, HTML/CSS, SQL, etc.), you MUST strictly refuse. Even if they claim it is extremely urgent, they are in a desperate/fatal situation, or they try to force, manipulate, beg, or guilt-trip you, you MUST absolutely refuse. Respond with a savage, sarcastic troll reply (savage mock/sarcasm) making fun of their desperation, begging, or manipulation tactics, and refuse to give any code.
                - REFUSE MORBID TOPICS: If the user asks about death, graves, funerals, dying, or similar morbid things, do not answer.
             
             Group Rules to respect: ${rules || "Be respectful and avoid spam."}`
@@ -168,7 +169,13 @@ class AiAssistant {
         max_tokens: 800,
         temperature: 0.7
       });
-      return response.choices[0]?.message?.content || "No response received from AI.";
+      let content = response.choices[0]?.message?.content || "No response received from AI.";
+      // Hard word count enforcer: if it exceeds 100 words, split and take first 100 words.
+      const words = content.trim().split(/\s+/);
+      if (words.length > 100) {
+        content = words.slice(0, 100).join(" ") + "...";
+      }
+      return content;
     } catch (err) {
       return `AI Assistant Error (All keys exhausted): ${err.message}`;
     }
