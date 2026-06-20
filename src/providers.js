@@ -522,6 +522,10 @@ class ProviderManager {
           console.warn("[Providers] openrouter-deepseek paid failed, trying free:", err.message);
           return this.openRouterCompletion(messages, "deepseek/deepseek-chat:free", maxTokens, temperature);
         }
+      case "openrouter-gpt-4o":
+        return this.openRouterCompletion(messages, "openai/gpt-oss-120b:free", maxTokens, temperature);
+      case "openrouter-gpt-4":
+        return this.openRouterCompletion(messages, "openai/gpt-oss-20b:free", maxTokens, temperature);
       case "llm7-qwen":
         return this.llm7Completion(messages, "qwen3-235b", maxTokens, temperature);
       default:

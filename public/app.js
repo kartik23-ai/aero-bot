@@ -1012,6 +1012,8 @@ function renderControlCentreRouting() {
 
   const modelOptions = [
     { value: "default", label: "Default Fallback Router" },
+    { value: "openrouter-gpt-4o", label: "ChatGPT-OSS 120B (Free GPT-4o)" },
+    { value: "openrouter-gpt-4", label: "ChatGPT-OSS 20B (Free GPT-4)" },
     { value: "groq-llama-8b", label: "Groq Llama 3.1 8B (Fastest)" },
     { value: "groq-llama-70b", label: "Groq Llama 3.3 70B (Smart)" },
     { value: "groq-deepseek-r1", label: "Groq DeepSeek R1 70B (Reasoning)" },
