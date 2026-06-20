@@ -50,6 +50,7 @@
           <button id="themeToggle" type="button">Theme</button>
           <button id="exportCsv" type="button">Export CSV</button>
           <button id="exportExcel" type="button">Export Excel</button>
+          <button id="disconnectBackendBtn" type="button" style="display: none; background: #ef4444; color: white; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 0.85em;">Disconnect Server</button>
         </div>
       </header>
 
@@ -489,6 +490,32 @@
         </div>
       </section>
     </main>
+
+    <div id="loginOverlay" class="login-overlay" style="display: none;">
+      <div class="login-card">
+        <div class="login-brand">
+          <span class="mark">AG</span>
+          <div>
+            <strong>AeroGroupGuard</strong>
+            <small>Secure Management Access</small>
+          </div>
+        </div>
+        <p class="login-desc">Enter your bot's backend details and admin password to securely connect to the control plane.</p>
+        <div class="login-form">
+          <div class="input-group">
+            <label for="loginBackendUrl">Backend API Server URL</label>
+            <input type="url" id="loginBackendUrl" placeholder="https://your-space.hf.space">
+            <small class="input-tip">Hugging Face URL (e.g. <code>https://aero-bot-aero-bot.hf.space</code>) or local URL (e.g. <code>http://localhost:7860</code>).</small>
+          </div>
+          <div class="input-group">
+            <label for="loginPassword">Admin Password / Token</label>
+            <input type="password" id="loginPassword" placeholder="Enter admin password">
+          </div>
+          <div id="loginError" class="login-error-msg" style="display: none;"></div>
+          <button type="button" id="loginConnectBtn" class="login-btn">Connect Server</button>
+        </div>
+      </div>
+    </div>
 
     <script src="/app.js?v=5"></script>
   </body>

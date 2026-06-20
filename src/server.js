@@ -2199,6 +2199,17 @@ const server = http.createServer(async (req, res) => {
     _totalBytesOut += res.socket?.bytesWritten || 0;
   });
 
+  // Enable CORS
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-token, X-Admin-Token");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   try {
     console.log(`[REQUEST] ${req.method} ${req.url}`);
     const ip = req.socket.remoteAddress || "unknown";

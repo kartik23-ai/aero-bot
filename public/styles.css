@@ -948,3 +948,162 @@ th {
 .control-section-title .section-icon {
   font-size: 1.2em;
 }
+
+/* =============================================
+   SECURE LOGIN OVERLAY & SERVER SELECTOR STYLES
+   ============================================= */
+
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: radial-gradient(circle at center, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.99));
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transition: opacity 0.4s ease;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 440px;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  text-align: left;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.login-brand .mark {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  font-weight: 800;
+  font-size: 1.25rem;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.login-brand strong {
+  font-size: 1.15rem;
+  color: #fff;
+  display: block;
+}
+
+.login-brand small {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  display: block;
+}
+
+.login-desc {
+  font-size: 0.88rem;
+  color: #94a3b8;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.login-form .input-group {
+  margin-bottom: 20px;
+}
+
+.login-form label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.login-form input {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.login-form .input-tip {
+  display: block;
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.login-form .input-tip code {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.login-error-msg {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  margin-bottom: 20px;
+  line-height: 1.4;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+}
+
+.login-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.3);
+}
+
+.login-btn:active {
+  transform: translateY(0);
+}
+
+.login-btn:disabled {
+  background: #334155;
+  color: #64748b;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
