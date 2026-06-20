@@ -511,6 +511,11 @@
             <label for="loginPassword">Admin Password / Token</label>
             <input type="password" id="loginPassword" placeholder="Enter admin password">
           </div>
+          <div class="input-group">
+            <label for="loginHfToken">Hugging Face Token (Optional)</label>
+            <input type="password" id="loginHfToken" placeholder="Enter hf_... (only for private spaces)">
+            <small class="input-tip">Required only if your Hugging Face Space is <strong>Private</strong>.</small>
+          </div>
           <div id="loginError" class="login-error-msg" style="display: none;"></div>
           <button type="button" id="loginConnectBtn" class="login-btn">Connect Server</button>
         </div>

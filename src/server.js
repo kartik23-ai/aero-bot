@@ -2181,7 +2181,7 @@ function verifyDashboardAuth(req) {
   if (!expectedPassword) {
     return true; // allow if no password configured (dev mode)
   }
-  const authHeader = req.headers["authorization"] || req.headers["x-admin-token"];
+  const authHeader = req.headers["x-admin-token"] || req.headers["authorization"];
   let token = "";
   if (authHeader) {
     if (authHeader.startsWith("Bearer ")) {

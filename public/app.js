@@ -10,16 +10,38 @@
       }
     }
     const token = localStorage.getItem("aero_admin_token");
-    if (token) {
+    const hfToken = localStorage.getItem("aero_hf_token");
+    
+    if (token || hfToken) {
       if (!init) init = {};
       if (!init.headers) init.headers = {};
-      if (init.headers instanceof Headers) {
-        if (!init.headers.has("X-Admin-Token")) {
-          init.headers.set("X-Admin-Token", token);
+      
+      const isHeadersInstance = init.headers instanceof Headers;
+      
+      // Inject Hugging Face Authorization token if present (for private spaces)
+      if (hfToken) {
+        const bearerVal = hfToken.startsWith("Bearer ") ? hfToken : `Bearer ${hfToken}`;
+        if (isHeadersInstance) {
+          if (!init.headers.has("Authorization")) {
+            init.headers.set("Authorization", bearerVal);
+          }
+        } else {
+          if (!init.headers["Authorization"] && !init.headers["authorization"]) {
+            init.headers["Authorization"] = bearerVal;
+          }
         }
-      } else {
-        if (!init.headers["X-Admin-Token"] && !init.headers["x-admin-token"]) {
-          init.headers["X-Admin-Token"] = token;
+      }
+      
+      // Inject Admin token for backend authorization
+      if (token) {
+        if (isHeadersInstance) {
+          if (!init.headers.has("X-Admin-Token")) {
+            init.headers.set("X-Admin-Token", token);
+          }
+        } else {
+          if (!init.headers["X-Admin-Token"] && !init.headers["x-admin-token"]) {
+            init.headers["X-Admin-Token"] = token;
+          }
         }
       }
     }
@@ -268,6 +290,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function checkSession() {
     const backendUrl = localStorage.getItem("aero_backend_url");
     const adminToken = localStorage.getItem("aero_admin_token");
+    const hfToken = localStorage.getItem("aero_hf_token");
 
     const overlay = document.getElementById("loginOverlay");
     const disconnectBtn = document.getElementById("disconnectBackendBtn");
@@ -277,15 +300,22 @@ document.addEventListener("DOMContentLoaded", () => {
       if (urlInput && !urlInput.value) {
         urlInput.value = window.location.origin.includes("file://") || window.location.origin.includes("github.io") ? "https://aero-bot-aero-bot.hf.space" : window.location.origin;
       }
+      const hfInput = document.getElementById("loginHfToken");
+      if (hfInput && hfToken) {
+        hfInput.value = hfToken;
+      }
       overlay.style.display = "flex";
       if (disconnectBtn) disconnectBtn.style.display = "none";
       return;
     }
 
     try {
-      const res = await fetch("/api/dashboard", {
-        headers: { "X-Admin-Token": adminToken }
-      });
+      const headers = { "X-Admin-Token": adminToken };
+      if (hfToken) {
+        headers["Authorization"] = hfToken.startsWith("Bearer ") ? hfToken : `Bearer ${hfToken}`;
+      }
+
+      const res = await fetch("/api/dashboard", { headers });
       if (res.status === 401) {
         throw new Error("Invalid admin password / token");
       }
@@ -307,7 +337,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const errEl = document.getElementById("loginError");
       if (errEl) {
-        errEl.textContent = `Connection failed: ${err.message}. Please verify the URL and password.`;
+        errEl.textContent = `Connection failed: ${err.message}. Please verify the URL and credentials.`;
         errEl.style.display = "block";
       }
     }
@@ -316,11 +346,13 @@ document.addEventListener("DOMContentLoaded", () => {
   async function handleConnect() {
     const urlInput = document.getElementById("loginBackendUrl");
     const passInput = document.getElementById("loginPassword");
+    const hfInput = document.getElementById("loginHfToken");
     const connectBtn = document.getElementById("loginConnectBtn");
     const errEl = document.getElementById("loginError");
 
     let url = urlInput.value.trim();
     const password = passInput.value.trim();
+    const hfToken = hfInput.value.trim();
 
     if (!url) {
       showToast("Please enter backend server URL!", "error");
@@ -341,9 +373,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       const testUrl = url.replace(/\/$/, "") + "/api/dashboard";
-      const res = await fetch(testUrl, {
-        headers: { "X-Admin-Token": password }
-      });
+      const headers = { "X-Admin-Token": password };
+      if (hfToken) {
+        headers["Authorization"] = hfToken.startsWith("Bearer ") ? hfToken : `Bearer ${hfToken}`;
+      }
+
+      const res = await fetch(testUrl, { headers });
 
       if (res.status === 401) {
         throw new Error("Invalid Password / Unauthorized.");
@@ -354,6 +389,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       localStorage.setItem("aero_backend_url", url);
       localStorage.setItem("aero_admin_token", password);
+      if (hfToken) {
+        localStorage.setItem("aero_hf_token", hfToken);
+      } else {
+        localStorage.removeItem("aero_hf_token");
+      }
 
       showToast("Connected to server successfully!", "success");
       passInput.value = "";
@@ -373,6 +413,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function handleDisconnect() {
     localStorage.removeItem("aero_backend_url");
     localStorage.removeItem("aero_admin_token");
+    localStorage.removeItem("aero_hf_token");
     if (refreshInterval) clearInterval(refreshInterval);
 
     showToast("Disconnected from server.", "info");
