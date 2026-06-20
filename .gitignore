@@ -12,3 +12,15 @@ db/firebase_key.json
 *.log
 index-CAipmyyE.js
 scratch_index.html
+scratch/
+scratch_*
+index-B6o9i0dI.js
+aero_frontend_bundle.js
+aero_frontend_bundle_real.js
+aero_home.html
+aeroweb_home.html
+AeroGroupGuard_Project_Summary.pdf
+db/user_memory.json
+public/*.mp3
+public/AeroGroupGuard_Report.pdf
+public/chat.html

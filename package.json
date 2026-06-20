@@ -17,6 +17,7 @@
   "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
+    "@google/genai": "^2.8.0",
     "axios": "^1.17.0",
     "firebase-admin": "^13.10.0",
     "groq-sdk": "^1.2.1",

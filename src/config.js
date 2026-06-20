@@ -11,7 +11,7 @@ const config = Object.freeze({
   databaseUrl: process.env.DATABASE_URL || "",
   redisUrl: process.env.REDIS_URL || "",
   openAiApiKey: process.env.OPENAI_API_KEY || "",
-  groqApiKey: process.env.GROQ_API_KEY || "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",
+  groqApiKey: process.env.GROQ_API_KEY || "",
   aiModel: process.env.AI_MODEL || "llama-3.3-70b-versatile",
   rateLimitPerMinute: Number.parseInt(process.env.RATE_LIMIT_PER_MINUTE || "120", 10)
 });

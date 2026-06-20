@@ -7,7 +7,8 @@ const state = {
   manual: { templates: [], customCommands: [], automations: [], scheduledMessages: [], quickActions: [], liveControls: [] },
   assistant: { assistantMode: { enabled: false, botMention: '', nonDestructiveOnly: false, autoWelcome: false, allowedReplies: [], blockedActions: [] }, outboundMessages: [] },
   audit: [],
-  connection: { connected: false, method: null, identifier: null, logs: [] }
+  connection: { connected: false, method: null, identifier: null, logs: [] },
+  controlCentre: { groups: [], memories: [], keys: {}, keysCheckedAt: null, tokenUsage: {} }
 };
 
 // Connection tabs state
@@ -171,6 +172,62 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       setLoading(manualBanBtn, false);
       await refresh();
+    });
+  }
+
+  // Control Centre sub-tabs
+  const ccTabs = [
+    { btn: "tabRoutingBtn", panel: "panelRouting" },
+    { btn: "tabMemoryBtn", panel: "panelMemory" },
+    { btn: "tabKeysBtn", panel: "panelKeys" },
+    { btn: "tabDockControlBtn", panel: "panelDockControl" }
+  ];
+
+  ccTabs.forEach(tab => {
+    const btn = document.getElementById(tab.btn);
+    if (btn) {
+      btn.addEventListener("click", () => {
+        ccTabs.forEach(t => {
+          document.getElementById(t.btn).classList.remove("active");
+          document.getElementById(t.panel).classList.remove("active");
+        });
+        btn.classList.add("active");
+        document.getElementById(tab.panel).classList.add("active");
+      });
+    }
+  });
+
+  // Verify Keys Now trigger
+  const verifyKeysBtn = document.getElementById("verifyKeysBtn");
+  if (verifyKeysBtn) {
+    verifyKeysBtn.addEventListener("click", async () => {
+      setLoading(verifyKeysBtn, true);
+      const grid = document.getElementById("keysGridContainer");
+      if (grid) grid.classList.add("keys-grid-loading");
+      showToast("Starting live keys health verification...", "info");
+      try {
+        const result = await post("/api/control-centre/keys/verify", { force: true });
+        if (result.error) {
+          showToast("Keys verification failed: " + result.error, "error");
+        } else {
+          state.controlCentre.keys = result.keys;
+          state.controlCentre.keysCheckedAt = result.timestamp;
+          renderControlCentreKeys();
+          showToast("Live keys verification complete!", "success");
+        }
+      } catch (e) {
+        showToast("Verification failed: " + e.message, "error");
+      }
+      if (grid) grid.classList.remove("keys-grid-loading");
+      setLoading(verifyKeysBtn, false);
+    });
+  }
+
+  // Memory Database search filter
+  const memorySearch = document.getElementById("memorySearch");
+  if (memorySearch) {
+    memorySearch.addEventListener("input", () => {
+      renderControlCentreMemory(memorySearch.value.trim());
     });
   }
 });
@@ -354,7 +411,7 @@ async function refresh() {
   try {
     const token = getAdminToken();
     const headers = { "X-Admin-Token": token };
-    const [dashboard, commands, portal, manual, assistant, audit, connStatus, approvals] = await Promise.all([
+    const [dashboard, commands, portal, manual, assistant, audit, connStatus, approvals, sysMetrics, ccGroups, ccMemory, ccKeys, ccTokenUsage] = await Promise.all([
       fetch("/api/dashboard", { headers }).then((res) => res.json()),
       fetch("/api/commands", { headers }).then((res) => res.json()),
       fetch("/api/portal", { headers }).then((res) => res.json()),
@@ -362,7 +419,12 @@ async function refresh() {
       fetch("/api/assistant-mode", { headers }).then((res) => res.json()),
       fetch("/api/audit-logs", { headers }).then((res) => res.json()),
       fetch("/api/install/status", { headers }).then((res) => res.json()),
-      fetch("/api/user-approvals", { headers }).then((res) => res.json())
+      fetch("/api/user-approvals", { headers }).then((res) => res.json()),
+      fetch("/api/system/metrics", { headers }).then((res) => res.json()).catch(() => ({})),
+      fetch("/api/control-centre/groups", { headers }).then((res) => res.json()).catch(() => ({ groups: [] })),
+      fetch("/api/control-centre/memory", { headers }).then((res) => res.json()).catch(() => ({ memories: [] })),
+      post("/api/control-centre/keys/verify", { force: false }).catch(() => ({})),
+      fetch("/api/control-centre/token-usage", { headers }).then((res) => res.json()).catch(() => ({ tokenUsage: {} }))
     ]);
     state.dashboard = dashboard;
     state.commands = commands;
@@ -372,6 +434,14 @@ async function refresh() {
     state.audit = audit.auditLogs;
     state.connection = connStatus;
     state.approvals = approvals;
+    state.systemMetrics = sysMetrics;
+    state.controlCentre.groups = ccGroups.groups || [];
+    state.controlCentre.memories = ccMemory.memories || [];
+    if (ccKeys && ccKeys.keys) {
+      state.controlCentre.keys = ccKeys.keys;
+      state.controlCentre.keysCheckedAt = ccKeys.timestamp;
+    }
+    state.controlCentre.tokenUsage = ccTokenUsage.tokenUsage || {};
     render();
   } catch (err) {
     console.error("Dashboard refresh failed:", err);
@@ -490,6 +560,40 @@ function render() {
   document.getElementById("engagementBar").style.width = `${Math.min(100, (metrics.engagementMetrics?.totalEvents || 1) * 12)}%`;
   document.getElementById("aiBar").style.width = `${Math.min(100, (metrics.aiUsage?.requests7d || 1))}%`;
 
+  // Render system metrics
+  if (state.systemMetrics && state.systemMetrics.cpuUsage) {
+    const sys = state.systemMetrics;
+    
+    let cpuPercent = "0.0%";
+    if (state._prevMetrics) {
+      const timeDiffMs = sys.timestamp - state._prevMetrics.timestamp;
+      const cpuDiffUs = (sys.cpuUsage.user + sys.cpuUsage.system) - (state._prevMetrics.cpuUsage.user + state._prevMetrics.cpuUsage.system);
+      if (timeDiffMs > 0) {
+        const cores = navigator.hardwareConcurrency || 2;
+        const rawPercent = (cpuDiffUs / 1000) / timeDiffMs / cores * 100;
+        cpuPercent = `${Math.min(100, Math.max(0, rawPercent)).toFixed(1)}%`;
+      }
+    }
+    state._prevMetrics = sys;
+
+    const heapUsedMb = Math.round(sys.memoryUsage.heapUsed / 1024 / 1024);
+    const heapTotalMb = Math.round(sys.memoryUsage.heapTotal / 1024 / 1024);
+    const rssMb = Math.round(sys.memoryUsage.rss / 1024 / 1024);
+    const freeGb = (sys.system.freeMem / 1024 / 1024 / 1024).toFixed(2);
+    const totalGb = (sys.system.totalMem / 1024 / 1024 / 1024).toFixed(2);
+    const uptimeHrs = (sys.system.uptime / 3600).toFixed(2);
+
+    const sysCpuEl = document.getElementById("sysCpu");
+    const sysRamEl = document.getElementById("sysRam");
+    const sysTotalMemEl = document.getElementById("sysTotalMem");
+    const sysUptimeEl = document.getElementById("sysUptime");
+
+    if (sysCpuEl) sysCpuEl.textContent = cpuPercent;
+    if (sysRamEl) sysRamEl.textContent = `${heapUsedMb}MB / ${heapTotalMb}MB (RSS: ${rssMb}MB)`;
+    if (sysTotalMemEl) sysTotalMemEl.textContent = `${freeGb}GB Free / ${totalGb}GB Total`;
+    if (sysUptimeEl) sysUptimeEl.textContent = `${uptimeHrs} hours`;
+  }
+
   // Render pending approvals
   const pendingListEl = document.getElementById("pendingApprovalsList");
   if (pendingListEl) {
@@ -524,6 +628,14 @@ function render() {
       approvedListEl.innerHTML = "<span>No whitelisted users yet.</span>";
     }
   }
+
+  // Render Control Centre sections
+  renderControlCentreRouting();
+  renderControlCentreMemory();
+  renderControlCentreKeys();
+  renderDockControls();
+  renderTokenUsageCards();
+  renderEnhancedHealth();
 
   renderRoleState();
 }
@@ -579,8 +691,7 @@ function selectedGroups() {
 }
 
 function getAdminToken() {
-  // Use session storage, prompt, or hardcoded password from credentials if connected
-  return state.connection?.identifier ? "kartik124" : "";
+  return "kartik124";
 }
 
 async function post(url, payload) {
@@ -676,3 +787,399 @@ window.handleRejectUser = async function(userId) {
     showToast("Rejection error: " + e.message, "error");
   }
 };
+
+// ============================================================================
+// AI CONTROL CENTRE RENDERERS & EVENT HANDLERS
+// ============================================================================
+
+function renderControlCentreRouting() {
+  const rowsEl = document.getElementById("routingRows");
+  if (!rowsEl) return;
+  
+  if (state.controlCentre.groups.length === 0) {
+    rowsEl.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">No docks joined yet. Install the bot in groups to map models.</td></tr>`;
+    return;
+  }
+
+  const modelOptions = [
+    { value: "default", label: "Default Fallback Router" },
+    { value: "groq-llama-8b", label: "Groq Llama 3.1 8B (Fastest)" },
+    { value: "groq-llama-70b", label: "Groq Llama 3.3 70B (Smart)" },
+    { value: "groq-deepseek-r1", label: "Groq DeepSeek R1 70B (Reasoning)" },
+    { value: "gemini-flash", label: "Gemini 2.5 Flash (Conversational)" },
+    { value: "cerebras-llama-70b", label: "Cerebras Llama 70B (High Speed)" },
+    { value: "openrouter-deepseek", label: "OpenRouter DeepSeek V3 (Free)" },
+    { value: "llm7-qwen", label: "LLM7 Qwen3 (Keyless Free)" }
+  ];
+
+  rowsEl.innerHTML = state.controlCentre.groups.map(group => {
+    const optionsHtml = modelOptions.map(opt => `
+      <option value="${opt.value}" ${group.aiModel === opt.value ? "selected" : ""}>${escapeHtml(opt.label)}</option>
+    `).join("");
+
+    const selectId = `routing-select-${group.id}`;
+    const btnId = `routing-btn-${group.id}`;
+
+    return `
+      <tr style="border-bottom:1px solid var(--line);">
+        <td style="padding:12px 8px; font-weight:600; color:var(--text);">${escapeHtml(group.name)} <small style="color:var(--muted); display:block; font-weight:normal; font-family:monospace;">ID: ${escapeHtml(group.id)}</small></td>
+        <td style="padding:12px 8px; color:var(--muted);">${group.memberCount} members</td>
+        <td style="padding:12px 8px;">
+          <select id="${selectId}" class="routing-select">
+            ${optionsHtml}
+          </select>
+        </td>
+        <td style="padding:12px 8px; text-align:right;">
+          <button id="${btnId}" class="save-routing-btn" onclick="handleSaveRouting('${group.id}', '${selectId}', '${btnId}')">Save Mappings</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+window.handleSaveRouting = async function(groupId, selectId, btnId) {
+  const btn = document.getElementById(btnId);
+  const select = document.getElementById(selectId);
+  if (!btn || !select) return;
+  
+  const aiModel = select.value;
+  setLoading(btn, true);
+  try {
+    const res = await post("/api/control-centre/groups/model", { groupId, aiModel });
+    if (res.success) {
+      showToast("AI model mappings updated successfully!", "success");
+      await refresh();
+    } else {
+      showToast("Failed to update mapping: " + (res.error || "unknown"), "error");
+    }
+  } catch (e) {
+    showToast("Mapping update error: " + e.message, "error");
+  }
+  setLoading(btn, false);
+};
+
+function renderControlCentreMemory(filterText = "") {
+  const rowsEl = document.getElementById("memoryRows");
+  if (!rowsEl) return;
+
+  const memories = state.controlCentre.memories || [];
+  const query = filterText.toLowerCase();
+  
+  const filtered = memories.filter(mem => {
+    if (!query) return true;
+    if (mem.id.toLowerCase().includes(query)) return true;
+    
+    // Check if query is in any fact key/value
+    return Object.entries(mem.facts || {}).some(([k, v]) => 
+      k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)
+    );
+  });
+
+  if (filtered.length === 0) {
+    rowsEl.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">No matching user memories found.</td></tr>`;
+    return;
+  }
+
+  rowsEl.innerHTML = filtered.map(mem => {
+    const factsArray = Object.entries(mem.facts || {});
+    const factsPreview = factsArray.length > 0
+      ? factsArray.map(([k, v]) => `<span style="color:var(--accent); font-weight:600;">${escapeHtml(k)}:</span> ${escapeHtml(v)}`).join(" | ")
+      : `<span style="color:var(--muted); font-style:italic;">No facts learned yet.</span>`;
+
+    // Clean user ID for safe element IDs
+    const btnId = `mem-btn-${mem.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
+
+    return `
+      <tr style="border-bottom:1px solid var(--line);">
+        <td style="padding:12px 8px; font-weight:600; font-family:monospace; color:var(--text);">${escapeHtml(mem.id)}</td>
+        <td style="padding:12px 8px; color:var(--text); text-align:center;">${mem.factsCount}</td>
+        <td style="padding:12px 8px; font-size:12.5px; max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(factsArray.map(([k,v])=>`${k}: ${v}`).join("\n"))}">${factsPreview}</td>
+        <td style="padding:12px 8px; color:var(--muted); text-align:center;">${mem.interactionCount} chats</td>
+        <td style="padding:12px 8px; text-align:right;">
+          <button id="${btnId}" class="clear-memory-btn" onclick="handleClearUserMemory('${mem.id}', '${btnId}')">Clear Memory</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+window.handleClearUserMemory = async function(userId, btnId) {
+  if (!confirm(`Are you sure you want to delete all memory facts for User ID: ${userId}? This will clear everything AI has learned about this user.`)) {
+    return;
+  }
+  
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+
+  setLoading(btn, true);
+  try {
+    const res = await post("/api/control-centre/memory/clear", { userId });
+    if (res.success) {
+      showToast(`Memory cleared for ${userId}!`, "success");
+      await refresh();
+    } else {
+      showToast("Failed to clear memory: " + (res.error || "unknown"), "error");
+    }
+  } catch (e) {
+    showToast("Clear memory error: " + e.message, "error");
+  }
+  setLoading(btn, false);
+};
+
+function renderControlCentreKeys() {
+  const container = document.getElementById("keysGridContainer");
+  if (!container) return;
+
+  const keys = state.controlCentre.keys || {};
+  const checkedAt = state.controlCentre.keysCheckedAt;
+
+  const keyMeta = [
+    { key: "groq", name: "Groq Cloud API", type: "Rotation List", quota: "14,400 req/day", signup: "console.groq.com" },
+    { key: "gemini", name: "Google Gemini API", type: "Conversational Chat", quota: "15 RPM Free Tier", signup: "aistudio.google.com" },
+    { key: "cerebras", name: "Cerebras Inference API", type: "Ultra High Speed Llama", quota: "Free Preview", signup: "cloud.cerebras.ai" },
+    { key: "openrouter", name: "OpenRouter API", type: "Free DeepSeek Fallback", quota: "Varies per model", signup: "openrouter.ai" },
+    { key: "serper", name: "Serper.dev Google Search", type: "Web Search Grounding", quota: "2,500 queries free", signup: "serper.dev" },
+    { key: "tavily", name: "Tavily Search AI", type: "Web Search Summary", quota: "1,000 queries free", signup: "tavily.com" },
+    { key: "weather", name: "OpenWeatherMap API", type: "Weather Utility", quota: "60/min, 1M/month", signup: "openweathermap.org" },
+    { key: "news", name: "NewsAPI org", type: "News Utility", quota: "100 queries/day", signup: "newsapi.org" },
+    { key: "movies", name: "TMDB Movies Database", type: "Movies/TV Utility", quota: "Rate limited only", signup: "themoviedb.org" },
+    { key: "recipes", name: "Spoonacular API", type: "Recipes/Food Utility", quota: "150 requests/day", signup: "spoonacular.com" }
+  ];
+
+  const timeString = checkedAt
+    ? `Verified: ${new Date(checkedAt).toLocaleTimeString()}`
+    : "Not verified in this session";
+
+  const footerEl = document.querySelector("#panelKeys .panel-desc");
+  if (footerEl) {
+    footerEl.textContent = `Live status of credentials configured in your environment. Verification executes pings to check validity. (${timeString})`;
+  }
+
+  if (Object.keys(keys).length === 0) {
+    container.innerHTML = `
+      <div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 30px; border:1px dashed var(--line); border-radius:8px;">
+        API keys are configured in .env. Click "Verify Keys Now" to check their live health and check responses.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = keyMeta.map(meta => {
+    const statusObj = keys[meta.key] || { status: "Missing", message: "Not checked" };
+    const status = statusObj.status || "Missing";
+    const statusLower = status.toLowerCase();
+    const isMissing = statusLower === "missing";
+    
+    let preview = statusObj.keyPreview || "None";
+    let message = statusObj.message || "Not configured";
+    
+    if (meta.key === "groq" && statusObj.keys) {
+      const activeKeys = statusObj.keys.filter(k => k.status === "Active").length;
+      preview = `${activeKeys}/${statusObj.keys.length} OK`;
+    }
+
+    return `
+      <div class="key-card">
+        <div class="key-card-header">
+          <span class="key-card-title">${escapeHtml(meta.name)}</span>
+          <span class="key-status-badge ${statusLower}">${escapeHtml(status)}</span>
+        </div>
+        <div class="key-card-body">
+          <div style="font-size:11px; font-weight:600; color:var(--accent-2); margin-bottom:4px;">${escapeHtml(meta.type)}</div>
+          <div style="margin-bottom:8px; font-size:12.5px; color:${isMissing ? "var(--muted)" : "var(--text)"};">${escapeHtml(message)}</div>
+          <div style="font-size:11px; color:var(--text-muted);">Limit: <strong>${meta.quota}</strong></div>
+        </div>
+        <div class="key-card-footer">
+          <span style="font-size:10px; color:var(--text-muted);">Signup: <a href="https://${meta.signup}" target="_blank" style="color:var(--accent); text-decoration:none;">${meta.signup}</a></span>
+          <span class="key-preview-text">${escapeHtml(preview)}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ============================================================================
+// DOCK CONTROL & METRICS RENDERERS
+// ============================================================================
+
+function renderDockControls() {
+  const rowsEl = document.getElementById("dockControlRows");
+  if (!rowsEl) return;
+  
+  const groups = state.controlCentre.groups;
+  if (groups.length === 0) {
+    rowsEl.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No docks joined yet.</td></tr>`;
+    return;
+  }
+
+  rowsEl.innerHTML = groups.map(group => {
+    const isEnabled = !group.botDisabled;
+    const statusClass = isEnabled ? "enabled" : "disabled";
+    const statusText = isEnabled ? "ON" : "OFF";
+    const toggleId = `toggle-${group.id}`;
+    const slowmodeInputId = `slowmode-${group.id}`;
+    const slowmodeBtnId = `slowmode-btn-${group.id}`;
+
+    return `
+      <tr style="border-bottom:1px solid var(--line);">
+        <td style="padding:12px 8px;">
+          <strong style="color:var(--text);">${escapeHtml(group.name)}</strong>
+          <small style="color:var(--muted); display:block; font-family:monospace; margin-top:2px;">ID: ${escapeHtml(group.id)}</small>
+        </td>
+        <td style="padding:12px 8px; color:var(--muted);">${group.memberCount}</td>
+        <td style="padding:12px 8px; color:var(--text); font-weight:600;">${(group.messageCount || 0).toLocaleString()}</td>
+        <td style="padding:12px 8px; color:var(--accent, #6366f1); font-weight:600;">${(group.aiRequestCount || 0).toLocaleString()}</td>
+        <td style="padding:12px 8px; text-align:center;">
+          <label class="toggle-switch" title="Toggle AI for this dock">
+            <input type="checkbox" id="${toggleId}" ${isEnabled ? 'checked' : ''} onchange="handleToggleDockAI('${group.id}', this)">
+            <span class="toggle-slider"></span>
+          </label>
+          <div class="ai-status-badge ${statusClass}" style="margin-top:6px;">
+            <span class="ai-status-dot"></span>
+            ${statusText}
+          </div>
+        </td>
+        <td style="padding:12px 8px; text-align:center;">
+          <div style="display:flex; align-items:center; justify-content:center; gap:6px;">
+            <input type="number" class="slowmode-input" id="${slowmodeInputId}" value="${group.aiSlowmodeSec || 0}" min="0" max="3600" placeholder="0">
+            <button class="slowmode-save-btn" id="${slowmodeBtnId}" onclick="handleSetAiSlowmode('${group.id}', '${slowmodeInputId}', '${slowmodeBtnId}')">Set</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+window.handleToggleDockAI = async function(groupId, checkbox) {
+  try {
+    const res = await post("/api/control-centre/groups/toggle", { groupId });
+    if (res.success) {
+      showToast(`AI ${res.botDisabled ? 'DISABLED' : 'ENABLED'} for this dock.`, res.botDisabled ? 'info' : 'success');
+      await refresh();
+    } else {
+      showToast("Toggle failed: " + (res.error || "unknown"), "error");
+      checkbox.checked = !checkbox.checked;
+    }
+  } catch (e) {
+    showToast("Toggle error: " + e.message, "error");
+    checkbox.checked = !checkbox.checked;
+  }
+};
+
+window.handleSetAiSlowmode = async function(groupId, inputId, btnId) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  if (!input || !btn) return;
+  
+  const seconds = parseInt(input.value, 10) || 0;
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    const res = await post("/api/control-centre/groups/ai-slowmode", { groupId, seconds });
+    if (res.success) {
+      showToast(`AI slowmode set to ${res.aiSlowmodeSec}s for this dock.`, 'success');
+      await refresh();
+    } else {
+      showToast("Slowmode update failed: " + (res.error || "unknown"), "error");
+    }
+  } catch (e) {
+    showToast("Slowmode error: " + e.message, "error");
+  }
+  btn.disabled = false;
+  btn.textContent = 'Set';
+};
+
+function renderTokenUsageCards() {
+  const container = document.getElementById("tokenCardsGrid");
+  if (!container) return;
+  
+  const usage = state.controlCentre.tokenUsage || {};
+  const providers = [
+    { key: 'groq', name: 'Groq', icon: '⚡' },
+    { key: 'cerebras', name: 'Cerebras', icon: '🧠' },
+    { key: 'openrouter', name: 'OpenRouter', icon: '🔀' },
+    { key: 'huggingface', name: 'HuggingFace', icon: '🤗' },
+    { key: 'llm7', name: 'LLM7', icon: '🆓' },
+    { key: 'ddg', name: 'DuckDuckGo', icon: '🦆' }
+  ];
+
+  const hasData = Object.keys(usage).length > 0;
+  if (!hasData) {
+    container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 30px; border:1px dashed var(--line); border-radius:8px;">No token usage data available yet.</div>`;
+    return;
+  }
+
+  container.innerHTML = providers.map(p => {
+    const data = usage[p.key] || { requests: 0, promptTokens: 0, completionTokens: 0 };
+    const totalTokens = data.promptTokens + data.completionTokens;
+    return `
+      <div class="token-card ${p.key}">
+        <h4>${p.icon} ${escapeHtml(p.name)}</h4>
+        <div class="token-requests">${data.requests.toLocaleString()}</div>
+        <div style="font-size:0.78em; color:var(--text-muted); margin-bottom:10px;">requests</div>
+        <div class="token-stat"><span>Prompt Tokens</span><strong>${data.promptTokens.toLocaleString()}</strong></div>
+        <div class="token-stat"><span>Completion Tokens</span><strong>${data.completionTokens.toLocaleString()}</strong></div>
+        <div class="token-stat"><span>Total Tokens</span><strong>${totalTokens.toLocaleString()}</strong></div>
+      </div>
+    `;
+  }).join("");
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function renderEnhancedHealth() {
+  const sys = state.systemMetrics;
+  if (!sys || !sys.cpuUsage) return;
+
+  // CPU gauge
+  let cpuPercent = 0;
+  if (state._prevMetrics) {
+    const timeDiffMs = sys.timestamp - state._prevMetrics.timestamp;
+    const cpuDiffUs = (sys.cpuUsage.user + sys.cpuUsage.system) - (state._prevMetrics.cpuUsage.user + state._prevMetrics.cpuUsage.system);
+    if (timeDiffMs > 0) {
+      const cores = navigator.hardwareConcurrency || 2;
+      cpuPercent = Math.min(100, Math.max(0, (cpuDiffUs / 1000) / timeDiffMs / cores * 100));
+    }
+  }
+
+  const cpuGaugeRing = document.getElementById('cpuGaugeRing');
+  const cpuGaugeValue = document.getElementById('cpuGaugeValue');
+  if (cpuGaugeRing) {
+    const cpuColor = cpuPercent > 80 ? '#ef4444' : cpuPercent > 50 ? '#f97316' : '#6366f1';
+    cpuGaugeRing.style.background = `conic-gradient(${cpuColor} ${cpuPercent * 3.6}deg, rgba(100,100,120,0.15) 0deg)`;
+  }
+  if (cpuGaugeValue) cpuGaugeValue.textContent = cpuPercent.toFixed(1) + '%';
+
+  // Memory gauge
+  const heapUsedMb = Math.round(sys.memoryUsage.heapUsed / 1024 / 1024);
+  const heapTotalMb = Math.round(sys.memoryUsage.heapTotal / 1024 / 1024);
+  const memPercent = heapTotalMb > 0 ? (heapUsedMb / heapTotalMb) * 100 : 0;
+  const memGaugeRing = document.getElementById('memGaugeRing');
+  const memGaugeValue = document.getElementById('memGaugeValue');
+  const memGaugeLabel = document.getElementById('memGaugeLabel');
+  if (memGaugeRing) {
+    const memColor = memPercent > 80 ? '#ef4444' : memPercent > 50 ? '#f97316' : '#10b981';
+    memGaugeRing.style.background = `conic-gradient(${memColor} ${memPercent * 3.6}deg, rgba(100,100,120,0.15) 0deg)`;
+  }
+  if (memGaugeValue) memGaugeValue.textContent = heapUsedMb + ' MB';
+  if (memGaugeLabel) memGaugeLabel.textContent = `${heapUsedMb}MB / ${heapTotalMb}MB`;
+
+  // Network
+  const netInValue = document.getElementById('netInValue');
+  const netOutValue = document.getElementById('netOutValue');
+  if (netInValue && sys.network) netInValue.textContent = formatBytes(sys.network.bytesIn || 0);
+  if (netOutValue && sys.network) netOutValue.textContent = formatBytes(sys.network.bytesOut || 0);
+
+  // Uptime
+  const uptimeEl = document.getElementById('uptimeGaugeValue');
+  if (uptimeEl && sys.system) {
+    const hrs = (sys.system.uptime / 3600).toFixed(1);
+    uptimeEl.textContent = hrs + 'h';
+  }
+}

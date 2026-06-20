@@ -1,6 +1,7 @@
 "use strict";
 
 const axios = require("axios");
+const { config } = require("./config");
 
 const API_BASE = "https://api.aryankaushik.space/api";
 const SOCKET_BASE = "https://api.aryankaushik.space";
@@ -18,6 +19,11 @@ class AeroAPI {
     this._connected = false;
     this._membersCache = new Map();
     this._pendingMembers = new Map();
+    this._lastTokenRefreshTime = 0;
+    this._messageQueue = [];
+    this._processingQueue = false;
+    this._lastMessageSentTime = 0;
+    this._sentMessageTimestamps = [];
   }
 
   get connected() {
@@ -170,27 +176,89 @@ class AeroAPI {
     }
   }
 
-  async sendMessage(dockId, text, image = null, isGroup = null) {
-    let useGroup = isGroup;
-    if (useGroup === null) {
-      useGroup = this.docks.some(d => d.id === dockId);
+  async sendMessage(dockId, text, image = null, isGroup = null, audio = null) {
+    return new Promise((resolve, reject) => {
+      this._messageQueue.push({ dockId, text, image, isGroup, audio, resolve, reject });
+      this._processQueue();
+    });
+  }
+
+  async _processQueue() {
+    if (this._processingQueue) return;
+    if (this._messageQueue.length === 0) return;
+
+    this._processingQueue = true;
+
+    try {
+      while (this._messageQueue.length > 0) {
+        const now = Date.now();
+
+        // 1. Sliding Window Outbound Rate Limiting
+        // Remove timestamps older than 60 seconds
+        this._sentMessageTimestamps = this._sentMessageTimestamps.filter(t => now - t < 60000);
+
+        const limit = config.rateLimitPerMinute || 120;
+        if (this._sentMessageTimestamps.length >= limit) {
+          const oldestTimestamp = this._sentMessageTimestamps[0];
+          const waitTime = 60000 - (now - oldestTimestamp);
+          console.warn(`[AeroAPI] Outbound rate limit reached (${limit} msg/min). Pausing queue for ${waitTime}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue; // Re-evaluate timestamps
+        }
+
+        // 2. Minimum delay between consecutive messages to avoid server spike rate limits
+        const elapsed = now - this._lastMessageSentTime;
+        const minDelay = 1500; // 1.5 seconds minimum delay
+
+        if (elapsed < minDelay) {
+          await new Promise(resolve => setTimeout(resolve, minDelay - elapsed));
+        }
+
+        const item = this._messageQueue.shift();
+        try {
+          let useGroup = item.isGroup;
+          if (useGroup === null) {
+            useGroup = this.docks.some(d => d.id === item.dockId);
+          }
+          let url;
+          if (useGroup) {
+            url = `${API_BASE}/docks/${item.dockId}/messages`;
+          } else {
+            url = `${API_BASE}/messages/send/${item.dockId}`;
+          }
+          const payload = { text: item.text };
+          if (item.image) {
+            payload.image = item.image;
+          }
+          if (item.audio) {
+            payload.audio = item.audio;
+          }
+          
+          console.log(`[AeroAPI] [Outbound Queue] Sending message to ${item.dockId}...`);
+          const res = await axios.post(
+            url,
+            payload,
+            { headers: this._authHeaders() }
+          );
+          const sentTime = Date.now();
+          this._lastMessageSentTime = sentTime;
+          this._sentMessageTimestamps.push(sentTime);
+          item.resolve(res.data);
+        } catch (err) {
+          console.error(`[AeroAPI] [Outbound Queue] Failed to send message:`, err.message);
+          // If it is a 429 Too Many Requests, put it back at the front and pause the queue
+          if (err?.response?.status === 429) {
+            this._messageQueue.unshift(item);
+            console.warn("[AeroAPI] 429 Too Many Requests. Pausing queue for 5 seconds...");
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } else {
+            item.reject(err);
+          }
+        }
+      }
+    } finally {
+      this._processingQueue = false;
     }
-    let url;
-    if (useGroup) {
-      url = `${API_BASE}/docks/${dockId}/messages`;
-    } else {
-      url = `${API_BASE}/messages/send/${dockId}`;
-    }
-    const payload = { text };
-    if (image) {
-      payload.image = image;
-    }
-    const res = await axios.post(
-      url,
-      payload,
-      { headers: this._authHeaders() }
-    );
-    return res.data;
   }
 
   /**
@@ -332,6 +400,14 @@ class AeroAPI {
    * Refresh access token
    */
   async refreshToken() {
+    const now = Date.now();
+    // 30 seconds cooldown throttle for token refresh to avoid spamming server during socket reconnect loops
+    if (now - this._lastTokenRefreshTime < 30000) {
+      console.log("[AeroAPI] Token refresh request throttled (30s cooldown).");
+      return false;
+    }
+    this._lastTokenRefreshTime = now;
+
     try {
       let refreshed = false;
       // First try refresh endpoint
@@ -497,10 +573,12 @@ class AeroAPI {
       const { io } = require("socket.io-client");
       this.socket = io(SOCKET_BASE, {
         auth: { token: this.accessToken },
-        transports: ["websocket", "polling"],
+        transports: ["websocket"],
         reconnection: true,
         reconnectionAttempts: Infinity,
-        reconnectionDelay: 2000
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 30000,
+        randomizationFactor: 0.5
       });
 
       this.socket.on("connect", () => {
@@ -553,12 +631,18 @@ class AeroAPI {
       this.socket.on("connect_error", async (err) => {
         console.error(`[AeroAPI] Socket error: ${err.message}`);
         if (err.message && (err.message.includes("auth") || err.message.includes("token") || err.message.includes("unauthorized") || err.message.includes("401"))) {
-          console.log("[AeroAPI] Socket auth error. Attempting token refresh...");
-          const refreshed = await this.refreshToken();
-          if (refreshed) {
-            this.socket.auth.token = this.accessToken;
-            this.socket.disconnect().connect();
-            console.log("[AeroAPI] Socket reconnected with fresh token after auth error.");
+          const now = Date.now();
+          if ((now - this._lastTokenRefreshTime) > 30000) {
+            this._lastTokenRefreshTime = now;
+            console.log("[AeroAPI] Socket auth error. Attempting token refresh...");
+            const refreshed = await this.refreshToken();
+            if (refreshed) {
+              this.socket.auth.token = this.accessToken;
+              this.socket.disconnect().connect();
+              console.log("[AeroAPI] Socket reconnected with fresh token after auth error.");
+            }
+          } else {
+            console.log("[AeroAPI] Token refresh throttled to prevent reconnect loop.");
           }
         }
       });

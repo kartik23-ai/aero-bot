@@ -166,6 +166,21 @@ test("custom commands execute via webhook", async () => {
 test("webhook detects reply-to-bot and skips morbid topics", async () => {
   const { baseUrl, close } = await startServer();
   try {
+    // Ensure bot is enabled for group-1 before testing mentions
+    let toggleRes = await fetch(`${baseUrl}/api/control-centre/groups/toggle`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ groupId: "group-1" })
+    });
+    let toggleBody = await toggleRes.json();
+    if (toggleBody.botDisabled) {
+      await fetch(`${baseUrl}/api/control-centre/groups/toggle`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ groupId: "group-1" })
+      });
+    }
+
     // 1. Test reply to bot (parent sender is aerogroupguard) triggers AI faq
     const response = await fetch(`${baseUrl}/api/webhooks/aero`, {
       method: "POST",

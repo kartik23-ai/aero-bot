@@ -29,6 +29,7 @@
         <a href="#reports">Reports</a>
         <a href="#monitoring">Monitoring</a>
         <a href="#user-approvals">Whitelist Approvals</a>
+        <a href="#control-centre">AI Control Centre</a>
         <a href="#security">Security</a>
       </nav>
     </aside>
@@ -297,6 +298,12 @@
           <ul id="reportList" class="list"></ul>
         </div>
 
+        <div class="panel" id="sandboxChat">
+          <h2>🧪 AI Sandbox Chat</h2>
+          <p style="color:var(--text-muted); margin-bottom: 12px; font-size: 0.9em;">Test the AI chatbot directly from your browser. No Aero connection needed.</p>
+          <a href="/chat.html" target="_blank" style="display:inline-block; padding: 10px 22px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.95em; transition: transform 0.15s, box-shadow 0.2s;" onmouseover="this.style.transform='scale(1.04)'; this.style.boxShadow='0 0 20px rgba(99,102,241,0.3)'" onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none'">Open Sandbox Chat →</a>
+        </div>
+
         <div class="panel span-2" id="monitoring">
           <h2>Real-Time Monitoring</h2>
           <div class="monitor-grid">
@@ -304,6 +311,166 @@
             <div><h3>Activity Feed</h3><ul id="activityFeed" class="list"></ul></div>
             <div><h3>Notifications</h3><ul id="notifications" class="list"></ul></div>
             <div><h3>Audit Logs</h3><ul id="auditList" class="list"></ul></div>
+            <div>
+              <h3>System Health Metrics</h3>
+              <div class="metrics-card" style="padding: 12px; background: var(--bg-hover); border-radius: 6px; border: 1px solid var(--line); color: var(--text-muted); font-size: 0.9em; line-height: 1.6;">
+                <p><strong>CPU Usage:</strong> <span id="sysCpu" style="color: var(--accent); font-weight: bold;">Calculating...</span></p>
+                <p><strong>RAM Heap:</strong> <span id="sysRam" style="color: var(--text);">Loading...</span></p>
+                <p><strong>Total Memory:</strong> <span id="sysTotalMem" style="color: var(--text);">Loading...</span></p>
+                <p><strong>Uptime:</strong> <span id="sysUptime" style="color: var(--text);">Loading...</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="panel span-2" id="control-centre">
+          <div class="panel-head">
+            <h2>AI Control Centre</h2>
+            <span class="pill">Central Command</span>
+          </div>
+          <p class="panel-desc" style="margin-bottom: 20px;">Configure dock-to-AI-model routing, manage Hermes' memory database, and monitor live API keys.</p>
+          
+          <div class="connection-container">
+            <div class="connection-tabs" style="margin-bottom: 20px;">
+              <button type="button" class="tab-btn active" id="tabRoutingBtn">AI Model Routing</button>
+              <button type="button" class="tab-btn" id="tabMemoryBtn">Hermes Memory Manager</button>
+              <button type="button" class="tab-btn" id="tabKeysBtn">Live API Keys Monitor</button>
+              <button type="button" class="tab-btn" id="tabDockControlBtn">Dock Control & Metrics</button>
+            </div>
+            
+            <div class="connection-panels">
+              <!-- Sub-tab 1: Model Routing -->
+              <div class="connection-panel active" id="panelRouting">
+                <h3>Dock-to-AI-Model Mappings</h3>
+                <p class="panel-desc" style="margin-top: 5px; margin-bottom: 15px;">Aero ke har ek dock ke liye selected AI Model configure karein. Direct answers, coding, and creative replies is selected model ke through route hongi.</p>
+                <div class="table-responsive" style="margin-top: 15px;">
+                  <table style="width:100%; text-align:left; border-collapse:collapse;">
+                    <thead>
+                      <tr style="border-bottom:2px solid var(--line);">
+                        <th style="padding:10px 8px;">Dock Name (Aero Group)</th>
+                        <th style="padding:10px 8px;">Members</th>
+                        <th style="padding:10px 8px;">Mapped AI Model</th>
+                        <th style="padding:10px 8px; text-align:right;">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="routingRows">
+                      <tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">Loading Docks list...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Sub-tab 2: Hermes Memory Manager -->
+              <div class="connection-panel" id="panelMemory">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap: wrap; gap:10px;">
+                  <h3>User Memory Database</h3>
+                  <input type="text" id="memorySearch" placeholder="Search user ID or facts..." style="width: 250px; margin-bottom: 0; padding: 6px 12px; border-radius: 6px; border:1px solid var(--line); background:var(--bg-hover); color:var(--text);">
+                </div>
+                <p class="panel-desc">All user memories (learned facts) are saved here. You can clear facts for any user ID to reset their conversation memory.</p>
+                
+                <div class="table-responsive" style="margin-top: 15px;">
+                  <table style="width:100%; text-align:left; border-collapse:collapse;">
+                    <thead>
+                      <tr style="border-bottom:2px solid var(--line);">
+                        <th style="padding:10px 8px;">User ID</th>
+                        <th style="padding:10px 8px;">Facts Count</th>
+                        <th style="padding:10px 8px;">Facts Preview</th>
+                        <th style="padding:10px 8px;">Interaction Count</th>
+                        <th style="padding:10px 8px; text-align:right;">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="memoryRows">
+                      <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">Loading memory list...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Sub-tab 3: Live API Keys Monitor -->
+              <div class="connection-panel" id="panelKeys">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px; flex-wrap: wrap; gap:10px;">
+                  <h3>API Credentials Status</h3>
+                  <button type="button" id="verifyKeysBtn" style="background: linear-gradient(135deg, #10b981, #059669); border: none; color: #fff; font-weight: 600; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13.5px; transition:transform 0.15s;">Verify Keys Now</button>
+                </div>
+                <p class="panel-desc">Live status of credentials configured in your environment. Verification executes pings to check validity and rate limits.</p>
+                
+                <div class="keys-grid" id="keysGridContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; margin-top: 20px;">
+                  <div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 30px; border:1px dashed var(--line); border-radius:8px;">Click "Verify Keys Now" to start health check.</div>
+                </div>
+              </div>
+
+              <!-- Sub-tab 4: Dock Control & Metrics -->
+              <div class="connection-panel" id="panelDockControl">
+  
+                <!-- Per-Dock AI Control Table -->
+                <h3 class="control-section-title"><span class="section-icon">🎛️</span> Per-Dock AI Control</h3>
+                <p class="panel-desc" style="margin-bottom: 15px;">Har dock ke liye AI replies on/off karein aur AI-specific slowdown set karein. Admin commands (kick, ban, mute, etc.) slowdown se bypass hote hain.</p>
+                <div class="table-responsive">
+                  <table style="width:100%; text-align:left; border-collapse:collapse;">
+                    <thead>
+                      <tr style="border-bottom:2px solid var(--line);">
+                        <th style="padding:10px 8px;">Dock Name</th>
+                        <th style="padding:10px 8px;">Members</th>
+                        <th style="padding:10px 8px;">Messages</th>
+                        <th style="padding:10px 8px;">AI Requests</th>
+                        <th style="padding:10px 8px; text-align:center;">AI Status</th>
+                        <th style="padding:10px 8px; text-align:center;">AI Slowmode (sec)</th>
+                      </tr>
+                    </thead>
+                    <tbody id="dockControlRows">
+                      <tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">Loading dock controls...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Token Usage Dashboard -->
+                <h3 class="control-section-title" style="margin-top: 35px;"><span class="section-icon">🪙</span> Token Usage Dashboard</h3>
+                <p class="panel-desc" style="margin-bottom: 5px;">Real-time token consumption across all AI providers. Counts are since last server restart.</p>
+                <div class="token-cards-grid" id="tokenCardsGrid">
+                  <div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 30px; border:1px dashed var(--line); border-radius:8px;">Loading token usage data...</div>
+                </div>
+
+                <!-- Enhanced Server Health -->
+                <h3 class="control-section-title" style="margin-top: 35px;"><span class="section-icon">💻</span> Server Health & Network</h3>
+                <p class="panel-desc" style="margin-bottom: 5px;">Real-time server performance metrics including CPU, memory, network throughput, and uptime.</p>
+                <div class="health-gauges-grid" id="healthGaugesGrid">
+                  <div class="health-gauge-card">
+                    <h4>CPU Usage</h4>
+                    <div class="gauge-ring" id="cpuGaugeRing" style="background: conic-gradient(#6366f1 0%, transparent 0%);">
+                      <span class="gauge-value" id="cpuGaugeValue">0%</span>
+                    </div>
+                    <div class="gauge-label">Process CPU utilization</div>
+                  </div>
+                  <div class="health-gauge-card">
+                    <h4>Memory Usage</h4>
+                    <div class="gauge-ring" id="memGaugeRing" style="background: conic-gradient(#10b981 0%, transparent 0%);">
+                      <span class="gauge-value" id="memGaugeValue">0 MB</span>
+                    </div>
+                    <div class="gauge-label" id="memGaugeLabel">Heap used / total</div>
+                  </div>
+                  <div class="health-gauge-card">
+                    <h4>Network In</h4>
+                    <div class="gauge-ring" style="background: conic-gradient(#3b82f6 100%, transparent 0%);">
+                      <span class="gauge-value" id="netInValue">0 B</span>
+                    </div>
+                    <div class="gauge-label">Total bytes received</div>
+                  </div>
+                  <div class="health-gauge-card">
+                    <h4>Network Out</h4>
+                    <div class="gauge-ring" style="background: conic-gradient(#f97316 100%, transparent 0%);">
+                      <span class="gauge-value" id="netOutValue">0 B</span>
+                    </div>
+                    <div class="gauge-label">Total bytes sent</div>
+                  </div>
+                  <div class="health-gauge-card">
+                    <h4>Uptime</h4>
+                    <div class="gauge-ring" style="background: conic-gradient(#8b5cf6 100%, transparent 0%);">
+                      <span class="gauge-value" id="uptimeGaugeValue">0h</span>
+                    </div>
+                    <div class="gauge-label">Server uptime</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

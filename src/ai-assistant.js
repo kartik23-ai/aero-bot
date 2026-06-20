@@ -20,49 +20,53 @@ class AiAssistant {
       keys = process.env.GROQ_API_KEY.split(",").map(k => k.trim()).filter(Boolean);
     }
     
-    // Fallback verified working keys
-    const fallbackKeys = [
-      "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",
-      "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",
-      "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",
-      "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",
-      "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"
-    ];
-    
-    for (const key of fallbackKeys) {
-      if (!keys.includes(key)) {
-        keys.push(key);
-      }
-    }
     this.keys = keys;
     this.currentKeyIndex = 0;
     this.groq = null;
   }
 
   async runChatCompletion(params) {
-    if (!Groq) throw new Error("groq-sdk not installed");
-    if (this.keys.length === 0) throw new Error("No API keys configured");
-
-    let lastError = null;
-    for (let attempts = 0; attempts < this.keys.length; attempts++) {
-      const activeKey = this.keys[this.currentKeyIndex];
-      if (!this.groq || this.groq.apiKey !== activeKey) {
-        this.groq = new Groq({ apiKey: activeKey });
-        // Set a property to track which key is active on the instance
-        this.groq.apiKey = activeKey;
-      }
-      try {
-        return await this.groq.chat.completions.create(params);
-      } catch (err) {
-        console.error(`[AI] chat.completions failed with key index ${this.currentKeyIndex}:`, err.message);
-        lastError = err;
-        // Cycle to next key in the pool
-        this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
-        this.groq = new Groq({ apiKey: this.keys[this.currentKeyIndex] });
-        this.groq.apiKey = this.keys[this.currentKeyIndex];
-      }
+    // Auto-inject model if not provided by caller
+    if (!params.model) {
+      params.model = this.model;
     }
-    throw lastError || new Error("All keys exhausted");
+
+    // 1. Try Groq SDK with key rotation if keys are available
+    if (Groq && this.keys && this.keys.length > 0) {
+      let lastError = null;
+      for (let attempts = 0; attempts < this.keys.length; attempts++) {
+        const activeKey = this.keys[this.currentKeyIndex];
+        if (!this.groq || this.groq.apiKey !== activeKey) {
+          this.groq = new Groq({ apiKey: activeKey });
+          this.groq.apiKey = activeKey;
+        }
+        try {
+          return await this.groq.chat.completions.create(params);
+        } catch (err) {
+          console.error(`[AI] chat.completions failed with key index ${this.currentKeyIndex}:`, err.message);
+          lastError = err;
+          // Cycle to next key in the pool
+          this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
+        }
+      }
+      console.warn("[AI] All Groq API keys failed. Falling back to ProviderManager...");
+    } else {
+      console.log("[AI] No Groq API keys configured. Using ProviderManager...");
+    }
+
+    // 2. Fallback: Use ProviderManager's multi-provider completion
+    try {
+      const { providers } = require("./providers");
+      const completion = await providers.chatCompletion(params.messages, {
+        model: params.model,
+        max_tokens: params.max_tokens,
+        temperature: params.temperature
+      });
+      return completion;
+    } catch (fallbackErr) {
+      console.error("[AI] ProviderManager fallback also failed:", fallbackErr.message);
+      throw fallbackErr;
+    }
   }
 
   async answer({ text, rules, role = "USER", language, senderName }) {
