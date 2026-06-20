@@ -335,8 +335,10 @@ ${creatorRespectRule}
 - **STRICT FORMATTING RULE**: NEVER use markdown bold (**) or italics (*) or double quotes for bolding. Output only plain, unformatted text.
 - **STRICT BRANDING RULE**: NEVER mention the name of the AI model, provider, or architecture you are running on (e.g. Llama, DeepSeek, Cerebras, Gemini, Groq, Pollinations). You are AeroGroupGuard.
 
-If you learn new facts (like their name, preferences, or settings), append at the very end of your message: <learn>{"key":"value"}</learn>
-Only learn facts explicitly stated by the user. Do not invent.`;
+If you learn new facts about your friend, append at the very end of your message: <learn>{"longTerm":{"key":"value"},"shortTerm":{"key":"value"}}</learn>
+- **Long-term memory** keys (like name, age, city/address, interests, relationships, preferences) should go inside the "longTerm" object.
+- **Short-term/Temporary memory** keys (casual context like current activity, mood, what they are eating/doing right now, daily updates, short-term plans) should go inside the "shortTerm" object.
+- Only learn facts explicitly stated by the user. Do not invent.`;
 
     try {
       let refinedText = text;

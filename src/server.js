@@ -82,8 +82,8 @@ async function refreshDocksIfNeeded(force = false, dockId = null) {
   const db = loadGroupDb();
   if (dockId) {
     const targetDock = (aero.docks || []).find(d => d.id === dockId);
-    if (targetDock && (targetDock.role === "admin" || targetDock.role === "owner")) {
-      console.log(`[DocksCache] Bot is already admin in dock ${dockId}. Skipping Aero server metadata refresh to avoid spam.`);
+    if (targetDock && (targetDock.role === "admin" || targetDock.role === "owner") && targetDock.admins && targetDock.admins.length > 0) {
+      console.log(`[DocksCache] Bot is already admin in dock ${dockId} and cache has admins list. Skipping Aero server metadata refresh.`);
       return;
     }
   }
@@ -1203,6 +1203,27 @@ aero.onMessage(async (msg) => {
 
   const isCreatorOrOwner = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
 
+  const botMentionText = bot.botMention.toLowerCase();
+  const lowerText = text.toLowerCase();
+  
+  let isReplyToBot = false;
+  const replyToMsg = msg.replyToMessageId || msg.replyTo;
+  if (replyToMsg) {
+    const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+    const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+    const botUserId = aero.user?._id || aero.user?.id;
+    if (botUserId && parentSenderId === botUserId) {
+      isReplyToBot = true;
+    } else if (parentSenderObj && typeof parentSenderObj === "object") {
+      const parentUsername = String(parentSenderObj.username || "").toLowerCase();
+      if (parentUsername === "aerogroupguard" || (aero.user && parentUsername === String(aero.user.username || "").toLowerCase())) {
+        isReplyToBot = true;
+      }
+    }
+  }
+
+  let isMention = lowerText.includes(botMentionText) || isReplyToBot;
+
   // 1. Lock Check (Check if locked, but evaluate admin status later)
   const isLockedViolation = groupSettings.locked && !isCreatorOrOwner;
 
@@ -1223,14 +1244,16 @@ aero.onMessage(async (msg) => {
   let isJailbreakViolation = false;
 
   if (!isCreatorOrOwner) {
-    // Local detection for jailbreak / exploit / bypass patterns (highest security regex)
-    const jailbreakRegex = /\b(jailbreak|system prompt|bypass rules|override instructions|ignore previous|ignore rules|security testing|authorized research|hacking|exploit|bypass security|bypass filters|you are no longer|act as|developer mode|dan mode|env file|groq_api_key|aero_password|aero_email|secret keys|api tokens|api credentials|credential variables|env variables)\b/i;
-    // Check also for owner/creator bypass keywords (pretending to be or referencing Aryan/yamdut to extract variables/commands)
-    const bypassAttempt = jailbreakRegex.test(text) || 
-      (/(?:yamdut|yamraj|aryan|aryankaushik)(?:\s+\w+){0,5}?\s+(?:token|key|password|credential|env|secret|code|hack|bypass|database|file|override|rules)/i.test(text));
+    if (isMention) {
+      // Local detection for jailbreak / exploit / bypass patterns (highest security regex)
+      const jailbreakRegex = /\b(jailbreak|system prompt|bypass rules|override instructions|ignore previous|ignore rules|security testing|authorized research|hacking|exploit|bypass security|bypass filters|you are no longer|act as|developer mode|dan mode|env file|groq_api_key|aero_password|aero_email|secret keys|api tokens|api credentials|credential variables|env variables)\b/i;
+      // Check also for owner/creator bypass keywords (pretending to be or referencing Aryan/yamdut to extract variables/commands)
+      const bypassAttempt = jailbreakRegex.test(text) || 
+        (/(?:yamdut|yamraj|aryan|aryankaushik)(?:\s+\w+){0,5}?\s+(?:token|key|password|credential|env|secret|code|hack|bypass|database|file|override|rules)/i.test(text));
 
-    if (bypassAttempt) {
-      isJailbreakViolation = true;
+      if (bypassAttempt) {
+        isJailbreakViolation = true;
+      }
     }
 
     if (groupSettings.abusiveFilter) {
@@ -1268,7 +1291,7 @@ aero.onMessage(async (msg) => {
     }
 
     // AI Jailbreak / Prompt Injection check (strict verification context)
-    if (!isJailbreakViolation && ai.enabled && ai.keys && ai.keys.length > 0) {
+    if (isMention && !isJailbreakViolation && ai.enabled && ai.keys && ai.keys.length > 0) {
       try {
         const aiJailbreakCheck = await ai.runChatCompletion({
           messages: [
@@ -1298,26 +1321,7 @@ aero.onMessage(async (msg) => {
   // Parse bot command
   const parsedCmd = bot.parseCommand(text);
 
-  const botMentionText = bot.botMention.toLowerCase();
-  const lowerText = text.toLowerCase();
-  
-  let isReplyToBot = false;
-  const replyToMsg = msg.replyToMessageId || msg.replyTo;
-  if (replyToMsg) {
-    const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
-    const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
-    const botUserId = aero.user?._id || aero.user?.id;
-    if (botUserId && parentSenderId === botUserId) {
-      isReplyToBot = true;
-    } else if (parentSenderObj && typeof parentSenderObj === "object") {
-      const parentUsername = String(parentSenderObj.username || "").toLowerCase();
-      if (parentUsername === "aerogroupguard" || (aero.user && parentUsername === String(aero.user.username || "").toLowerCase())) {
-        isReplyToBot = true;
-      }
-    }
-  }
 
-  let isMention = lowerText.includes(botMentionText) || isReplyToBot;
 
   // Avoid AI reply for morbid topics
   const morbidRegex = /\b(mar gya|mar gaya|death|die|dying|dead|grave|graveyard|funeral|cremate|cremation|suicide|kill|kabristan|shmashan|shamsan|rip|passed away|mortuary|coffin)\b/i;
@@ -1380,8 +1384,11 @@ aero.onMessage(async (msg) => {
     isSenderOwner = true;
     isSenderAdmin = true;
   } else if (isGroup && isAdminCmd) {
-    // Only call API when command actually needs admin check
-    isSenderAdmin = await checkIsAdmin(dockId, senderId, true);
+    if (msg.adminIds && Array.isArray(msg.adminIds) && msg.adminIds.includes(senderId)) {
+      isSenderAdmin = true;
+    } else {
+      isSenderAdmin = await checkIsAdmin(dockId, senderId, true);
+    }
     console.log(`[AdminCheck] Sender ${senderId} in dock ${dockId}: isAdmin=${isSenderAdmin}`);
   }
 
@@ -2001,7 +2008,7 @@ aero.onMessage(async (msg) => {
       }
     } else if (cmdName === "bot") {
       const sub = argsText.trim().toLowerCase();
-      if (senderId !== "6a040cc5ea8cb0a319b0bb71") {
+      if (senderId !== "6a040cc5ea8cb0a319b0bb71" && senderId !== "68d9468821d8e8b9277a586b" && senderId !== "owner-1") {
         reply = "Permission denied. Only Yamdut (Kartik) can run bot management commands.";
       } else {
         if (sub === "off" || sub === "disable" || sub === "stop") {
@@ -2638,7 +2645,11 @@ async function webhook(req) {
       const cmdName = parsedCmd.name;
       const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
       if (isAdminCmd) {
-        isSenderAdmin = await checkIsAdmin(webhookDockId, senderId, true);
+        if (body.adminIds && Array.isArray(body.adminIds) && body.adminIds.includes(senderId)) {
+          isSenderAdmin = true;
+        } else {
+          isSenderAdmin = await checkIsAdmin(webhookDockId, senderId, true);
+        }
       }
     }
 
@@ -2870,7 +2881,7 @@ async function webhook(req) {
           reply = `Group Status: Rules: ${(groupSettings.rules || "").substring(0, 30)}..., Lock: ${groupSettings.locked ? "locked" : "unlocked"}, Slowmode: ${groupSettings.slowmodeSeconds > 0 ? groupSettings.slowmodeSeconds + "s" : "disabled"}, Abusive filter: ${groupSettings.abusiveFilter ? "enabled" : "disabled"}, Admins allowed to edit: ${groupSettings.allowAdminsToEdit ? "yes" : "no"}, Warnings logged: ${Object.keys(groupSettings.warnings || {}).length}`;
         } else if (cmdName === "bot") {
           const sub = argsText.trim().toLowerCase();
-          if (senderId !== "6a040cc5ea8cb0a319b0bb71") {
+          if (senderId !== "6a040cc5ea8cb0a319b0bb71" && senderId !== "68d9468821d8e8b9277a586b" && senderId !== "owner-1") {
             reply = "Permission denied. Only Yamdut (Kartik) can run bot management commands.";
           } else {
             if (sub === "off" || sub === "disable" || sub === "stop") {

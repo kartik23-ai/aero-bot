@@ -1080,8 +1080,9 @@ function renderControlCentreMemory(filterText = "") {
     if (!query) return true;
     if (mem.id.toLowerCase().includes(query)) return true;
     
-    // Check if query is in any fact key/value
-    return Object.entries(mem.facts || {}).some(([k, v]) => 
+    // Check if query is in long-term or short-term key/value
+    const allFacts = { ...(mem.facts?.longTerm || {}), ...(mem.facts?.shortTerm || {}) };
+    return Object.entries(allFacts).some(([k, v]) => 
       k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)
     );
   });
@@ -1092,10 +1093,22 @@ function renderControlCentreMemory(filterText = "") {
   }
 
   rowsEl.innerHTML = filtered.map(mem => {
-    const factsArray = Object.entries(mem.facts || {});
-    const factsPreview = factsArray.length > 0
-      ? factsArray.map(([k, v]) => `<span style="color:var(--accent); font-weight:600;">${escapeHtml(k)}:</span> ${escapeHtml(v)}`).join(" | ")
-      : `<span style="color:var(--muted); font-style:italic;">No facts learned yet.</span>`;
+    const ltArray = Object.entries(mem.facts?.longTerm || {});
+    const stArray = Object.entries(mem.facts?.shortTerm || {});
+    
+    let factsPreview = "";
+    if (ltArray.length > 0) {
+      factsPreview += `<strong style="color:var(--accent);">Long-term:</strong> ` + ltArray.map(([k, v]) => `<span style="color:var(--text-muted);">${escapeHtml(k)}:</span> ${escapeHtml(v)}`).join(", ");
+    }
+    if (stArray.length > 0) {
+      if (factsPreview) factsPreview += " | ";
+      factsPreview += `<strong style="color:#a78bfa;">Short-term:</strong> ` + stArray.map(([k, v]) => `<span style="color:var(--text-muted);">${escapeHtml(k)}:</span> ${escapeHtml(v)}`).join(", ");
+    }
+    if (!factsPreview) {
+      factsPreview = `<span style="color:var(--muted); font-style:italic;">No facts learned yet.</span>`;
+    }
+
+    const hoverText = ltArray.map(([k,v])=>`LT - ${k}: ${v}`).concat(stArray.map(([k,v])=>`ST - ${k}: ${v}`)).join("\n");
 
     // Clean user ID for safe element IDs
     const btnId = `mem-btn-${mem.id.replace(/[^a-zA-Z0-9]/g, "-")}`;
@@ -1104,7 +1117,7 @@ function renderControlCentreMemory(filterText = "") {
       <tr style="border-bottom:1px solid var(--line);">
         <td style="padding:12px 8px; font-weight:600; font-family:monospace; color:var(--text);">${escapeHtml(mem.id)}</td>
         <td style="padding:12px 8px; color:var(--text); text-align:center;">${mem.factsCount}</td>
-        <td style="padding:12px 8px; font-size:12.5px; max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(factsArray.map(([k,v])=>`${k}: ${v}`).join("\n"))}">${factsPreview}</td>
+        <td style="padding:12px 8px; font-size:12.5px; max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(hoverText)}">${factsPreview}</td>
         <td style="padding:12px 8px; color:var(--muted); text-align:center;">${mem.interactionCount} chats</td>
         <td style="padding:12px 8px; text-align:right;">
           <button id="${btnId}" class="clear-memory-btn" onclick="handleClearUserMemory('${mem.id}', '${btnId}')">Clear Memory</button>

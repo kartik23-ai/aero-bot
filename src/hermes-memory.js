@@ -6,6 +6,17 @@ const path = require("node:path");
 const MEMORY_PATH = path.join(__dirname, "..", "db", "user_memory.json");
 const SAVE_THROTTLE_MS = 5000; // Save at most once every 5 seconds
 
+function isLongTermKey(key) {
+  const k = String(key).toLowerCase();
+  const longTermKeywords = [
+    "name", "user", "nick", "address", "city", "town", "country", "state", "place", "live", "reside",
+    "age", "gender", "birth", "job", "profession", "work", "office", "school", "college", "uni", "education",
+    "hobby", "hobbies", "interest", "preference", "like", "dislike", "fav", "relation", "family", "friend",
+    "creator", "owner", "lang"
+  ];
+  return longTermKeywords.some(kw => k.includes(kw));
+}
+
 class HermesMemory {
   constructor() {
     this.cache = new Map();
@@ -86,28 +97,85 @@ class HermesMemory {
   updateUserMemory(userId, newFacts) {
     if (!userId || !newFacts) return;
     const current = this.getUserMemory(userId);
-    const updated = { ...current, ...newFacts };
+    const mem = { ...current };
     
-    // Clean up empty keys
-    for (const key of Object.keys(updated)) {
-      if (updated[key] === null || updated[key] === undefined || updated[key] === "") {
-        delete updated[key];
+    if (!mem.longTerm) mem.longTerm = {};
+    if (!mem.shortTerm) mem.shortTerm = {};
+
+    // If newFacts has longTerm or shortTerm keys, merge them
+    if (newFacts.longTerm || newFacts.shortTerm) {
+      if (newFacts.longTerm) {
+        mem.longTerm = { ...mem.longTerm, ...newFacts.longTerm };
+      }
+      if (newFacts.shortTerm) {
+        mem.shortTerm = { ...mem.shortTerm, ...newFacts.shortTerm };
+      }
+    } else {
+      // If it's a flat object, auto-categorize keys
+      for (const [k, v] of Object.entries(newFacts)) {
+        if (k === "_history" || k === "_interactionCount" || k === "longTerm" || k === "shortTerm") continue;
+        if (isLongTermKey(k)) {
+          mem.longTerm[k] = v;
+        } else {
+          mem.shortTerm[k] = v;
+        }
       }
     }
 
-    this.cache.set(userId, updated);
+    // Clean up empty keys
+    for (const key of Object.keys(mem.longTerm)) {
+      if (mem.longTerm[key] === null || mem.longTerm[key] === undefined || mem.longTerm[key] === "") {
+        delete mem.longTerm[key];
+      }
+    }
+    for (const key of Object.keys(mem.shortTerm)) {
+      if (mem.shortTerm[key] === null || mem.shortTerm[key] === undefined || mem.shortTerm[key] === "") {
+        delete mem.shortTerm[key];
+      }
+    }
+
+    this.cache.set(userId, mem);
     this._saveMemoryAsync();
   }
 
   // Helper to compile facts into a clean string for the prompt context
-  // Token budget: ~100 tokens max for facts
   compileFactsString(userId) {
     const memory = this.getUserMemory(userId);
-    const entries = Object.entries(memory).filter(([k]) => k !== "_history" && k !== "_interactionCount");
-    if (entries.length === 0) return "None yet.";
-    
-    // Limit to 8 most recent facts and trim values to 50 chars
-    return entries.slice(-8).map(([key, val]) => `- ${key}: ${String(val).substring(0, 50)}`).join("\n");
+    let longTerm = memory.longTerm || {};
+    let shortTerm = memory.shortTerm || {};
+
+    // Auto-migrate flat facts if present
+    const flatEntries = Object.entries(memory).filter(([k]) => k !== "_history" && k !== "_interactionCount" && k !== "longTerm" && k !== "shortTerm");
+    if (flatEntries.length > 0 && Object.keys(longTerm).length === 0 && Object.keys(shortTerm).length === 0) {
+      longTerm = {};
+      shortTerm = {};
+      const updatedMem = { ...memory };
+      for (const [k, v] of flatEntries) {
+        if (isLongTermKey(k)) longTerm[k] = v;
+        else shortTerm[k] = v;
+        delete updatedMem[k];
+      }
+      updatedMem.longTerm = longTerm;
+      updatedMem.shortTerm = shortTerm;
+      this.cache.set(userId, updatedMem);
+      this._saveMemoryAsync();
+    }
+
+    const ltEntries = Object.entries(longTerm);
+    const stEntries = Object.entries(shortTerm);
+
+    if (ltEntries.length === 0 && stEntries.length === 0) {
+      return "None yet.";
+    }
+
+    let result = "";
+    if (ltEntries.length > 0) {
+      result += "Long-term info (important facts about your friend):\n" + ltEntries.map(([k, v]) => `  - ${k}: ${v}`).join("\n") + "\n";
+    }
+    if (stEntries.length > 0) {
+      result += "Short-term/Temporary context (casual things happening right now):\n" + stEntries.map(([k, v]) => `  - ${k}: ${v}`).join("\n") + "\n";
+    }
+    return result.trim();
   }
 
   // Track conversation history (sliding window of last 3 exchanges = 6 messages)
@@ -153,13 +221,28 @@ class HermesMemory {
   getAllUserMemories() {
     const list = [];
     for (const [userId, data] of this.cache.entries()) {
-      const facts = Object.entries(data).filter(([k]) => k !== "_history" && k !== "_interactionCount");
+      let longTerm = data.longTerm || {};
+      let shortTerm = data.shortTerm || {};
+      
+      const flatEntries = Object.entries(data).filter(([k]) => k !== "_history" && k !== "_interactionCount" && k !== "longTerm" && k !== "shortTerm");
+      if (flatEntries.length > 0 && Object.keys(longTerm).length === 0 && Object.keys(shortTerm).length === 0) {
+        longTerm = {};
+        shortTerm = {};
+        for (const [k, v] of flatEntries) {
+          if (isLongTermKey(k)) longTerm[k] = v;
+          else shortTerm[k] = v;
+        }
+      }
+
       list.push({
         id: userId,
         interactionCount: data._interactionCount || 0,
         historyCount: data._history ? data._history.length : 0,
-        factsCount: facts.length,
-        facts: Object.fromEntries(facts)
+        factsCount: Object.keys(longTerm).length + Object.keys(shortTerm).length,
+        facts: {
+          longTerm,
+          shortTerm
+        }
       });
     }
     return list;
