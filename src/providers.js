@@ -501,7 +501,7 @@ class ProviderManager {
     }
     switch (modelKey) {
       case "groq-llama-8b":
-        return this.groqChatCompletion(messages, "llama-3.1-8b-instant", maxTokens, temperature);
+        return this.groqChatCompletion(messages, "llama-3.3-70b-versatile", maxTokens, temperature);
       case "groq-llama-70b":
         return this.groqChatCompletion(messages, "llama-3.3-70b-versatile", maxTokens, temperature);
       case "groq-deepseek-r1":
@@ -1284,7 +1284,7 @@ RULES:
           const GroqSDK = require("groq-sdk");
           const client = new GroqSDK({ apiKey: key });
           await client.chat.completions.create({
-            model: "llama-3.1-8b-instant",
+            model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: "ping" }],
             max_tokens: 1
           });
