@@ -1040,11 +1040,11 @@ class ProviderManager {
   // Free, no key, reliable, high quality
   // =============================================
   async generateImage(prompt) {
-    // 1. PRIMARY: Pollinations AI (free, no API key, always available)
+    // 1. PRIMARY: Pollinations AI (free, no API key, always available, upgraded to FLUX model)
     try {
-      console.log("[Providers] Generating image using Pollinations AI (free)...");
+      console.log("[Providers] Generating image using Pollinations AI (Flux)...");
       const axios = require("axios");
-      const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&private=true&enhance=true&seed=${Date.now()}`;
+      const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&private=true&enhance=true&model=flux&seed=${Date.now()}`;
       const res = await axios.get(polUrl, {
         responseType: "arraybuffer",
         headers: {
@@ -1054,14 +1054,33 @@ class ProviderManager {
       });
       const contentType = res.headers["content-type"] || "image/jpeg";
       if (res.status === 200 && res.data.length > 500) {
-        console.log("[Providers] Pollinations AI image generated successfully:", res.data.length, "bytes");
+        console.log("[Providers] Pollinations AI Flux image generated successfully:", res.data.length, "bytes");
         const base64 = Buffer.from(res.data).toString("base64");
         return `data:${contentType};base64,${base64}`;
       }
     } catch (err) {
-      console.error("[Providers] Pollinations AI failed:", err.message);
+      console.error("[Providers] Pollinations AI Flux failed:", err.message);
     }
 
+    // 2. SECONDARY: Hercai AI (free, no API key, high quality stable diffusion fallback)
+    try {
+      console.log("[Providers] Generating image using Hercai AI (free)...");
+      const axios = require("axios");
+      const hercaiUrl = `https://hercai.onrender.com/v3/text2image?prompt=${encodeURIComponent(prompt)}&model=v3`;
+      const res = await axios.get(hercaiUrl, { timeout: 25000 });
+      if (res.data && res.data.url) {
+        console.log("[Providers] Hercai URL obtained, downloading image buffer...");
+        const imgRes = await axios.get(res.data.url, { responseType: "arraybuffer", timeout: 25000 });
+        if (imgRes.status === 200 && imgRes.data.length > 500) {
+          const contentType = imgRes.headers["content-type"] || "image/jpeg";
+          const base64 = Buffer.from(imgRes.data).toString("base64");
+          console.log("[Providers] Hercai image generated successfully:", imgRes.data.length, "bytes");
+          return `data:${contentType};base64,${base64}`;
+        }
+      }
+    } catch (err) {
+      console.error("[Providers] Hercai AI failed:", err.message);
+    }
 
     // 3. OpenAI DALL-E 3 (if OPENAI_API_KEY exists)
     if (process.env.OPENAI_API_KEY) {

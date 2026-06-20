@@ -10,7 +10,27 @@ class HermesMemory {
   constructor() {
     this.cache = new Map();
     this._saveScheduled = false;
+    this.saveCallback = null;
     this._loadMemory();
+  }
+
+  setSaveCallback(cb) {
+    this.saveCallback = cb;
+  }
+
+  loadFromObject(obj) {
+    if (!obj || typeof obj !== "object") return;
+    this.cache.clear();
+    for (const [userId, data] of Object.entries(obj)) {
+      this.cache.set(userId, data);
+    }
+    console.log(`[HermesMemory] Loaded memory for ${this.cache.size} users from cloud.`);
+    // Write local backup
+    try {
+      fs.writeFileSync(MEMORY_PATH, JSON.stringify(obj, null, 2), "utf-8");
+    } catch (err) {
+      console.error("[HermesMemory] Failed to write local memory backup after cloud load:", err.message);
+    }
   }
 
   // Load user memories from disk
@@ -46,7 +66,9 @@ class HermesMemory {
           if (err) {
             console.error("[HermesMemory] Async save failed:", err.message);
           }
-          // Removed noisy success log to reduce console spam
+          if (this.saveCallback) {
+            this.saveCallback(obj);
+          }
         });
       } catch (err) {
         console.error("[HermesMemory] Failed to schedule memory save:", err.message);

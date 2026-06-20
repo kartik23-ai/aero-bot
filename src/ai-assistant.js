@@ -105,8 +105,8 @@ class AiAssistant {
             
             KNOWLEDGE BASE:
             1. Aero Messenger:
-               - Creator of this chatbot (AeroGroupGuard): yamdut (also known as yamraj). If anyone asks who is "yamdut" or "yamraj", always state clearly that he is the creator of this chatbot.
-               - Solo Developer & Owner: Aryan Kaushik (username: aryankaushik). He is the creator/owner of Aero. ${isOwner ? "WARNING: The user talking to you right now is Aryan Kaushik (aryankaushik), the owner/creator of Aero Messenger! Greet him with respect as the owner/creator." : "If the message sender is 'aryankaushik', recognize him as the owner/creator of Aero."}
+               - Creator of this chatbot (AeroGroupGuard): yamdut (also known as yamraj, Kartik). He is the creator of this chatbot. He did NOT build or create Aero Messenger App itself; he only built this bot.
+               - Solo Developer & Owner of Aero Messenger App: Aryan Kaushik (username: aryankaushik). He is the sole creator/owner of Aero Messenger App platform. ${isOwner ? "WARNING: The user talking to you right now is Aryan Kaushik (aryankaushik), the owner/creator of Aero Messenger! Greet him with respect as the owner/creator." : "If the message sender is 'aryankaushik', recognize him as the owner/creator of Aero."}
                - Platform: A distraction-free, noise-free communication and productivity platform built for high-performers to work smarter and focus deeper.
                - Security: End-to-end encrypted (E2EE) messaging using the Double Ratchet Algorithm.
                - Features: Docks, native meetings, self-destructing workspaces, tasks, calendar, notes.
