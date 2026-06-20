@@ -2224,7 +2224,7 @@ if (require.main === module) {
     }
   })();
 
-  server.listen(config.port, () => {
+  server.listen(config.port, "0.0.0.0", () => {
     logger.info("server_started", { port: config.port });
     if (process.env.LOCAL_ONLY === "true") {
       console.log("[LocalMode] LOCAL_ONLY=true — Aero auto-connect SKIPPED. Running in local sandbox mode only.");
