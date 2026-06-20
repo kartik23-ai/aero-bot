@@ -2020,21 +2020,38 @@ aero.onMessage(async (msg) => {
           saveGroupDb(db);
           reply = "✅ Bot AI has been enabled for this group.";
         } else if (sub === "disconnect" || sub === "shutdown" || sub === "kill") {
-          reply = "🔌 Disconnecting and shutting down bot server... Bye! 👋";
+          reply = "🔌 Disconnecting bot from Aero server... Bye! 👋";
           (async () => {
             try {
               await aero.sendMessage(dockId, reply);
-              console.log("[BotControl] Remote shutdown requested by Yamdut.");
-              process.exit(0);
+              console.log("[BotControl] Remote disconnect requested by Yamdut.");
+              aero.disconnect();
             } catch (err) {
-              console.error("[BotControl] Exit failed:", err.message);
-              process.exit(1);
+              console.error("[BotControl] Disconnect failed:", err.message);
+              aero.disconnect();
             }
           })();
           reply = null;
         } else {
           reply = "Usage: `/bot off` (disable AI), `/bot on` (enable AI), `/bot disconnect` (shutdown server)";
         }
+      }
+    } else if (cmdName === "shutdown" || cmdName === "disconnect" || cmdName === "kill") {
+      if (senderId !== "6a040cc5ea8cb0a319b0bb71" && senderId !== "68d9468821d8e8b9277a586b" && senderId !== "owner-1") {
+        reply = "Permission denied. Only Yamdut (Kartik) can run bot management commands.";
+      } else {
+        reply = "🔌 Disconnecting bot from Aero server... Bye! 👋";
+        (async () => {
+          try {
+            await aero.sendMessage(dockId, reply);
+            console.log(`[BotControl] Direct ${cmdName} command requested by Yamdut.`);
+            aero.disconnect();
+          } catch (err) {
+            console.error(`[BotControl] Direct ${cmdName} failed:`, err.message);
+            aero.disconnect();
+          }
+        })();
+        reply = null;
       }
     } else {
       const matchingCommand = customCommands.find(c => {
@@ -2893,21 +2910,38 @@ async function webhook(req) {
               saveGroupDb(db);
               reply = "✅ Bot AI has been enabled for this group.";
             } else if (sub === "disconnect" || sub === "shutdown" || sub === "kill") {
-              reply = "🔌 Disconnecting and shutting down bot server... Bye! 👋";
+              reply = "🔌 Disconnecting bot from Aero server... Bye! 👋";
               (async () => {
                 try {
                   await aero.sendMessage(webhookDockId, reply);
-                  console.log("[BotControl] Webhook Remote shutdown requested by Yamdut.");
-                  process.exit(0);
+                  console.log("[BotControl] Webhook Remote disconnect requested by Yamdut.");
+                  aero.disconnect();
                 } catch (err) {
-                  console.error("[BotControl] Exit failed:", err.message);
-                  process.exit(1);
+                  console.error("[BotControl] Disconnect failed:", err.message);
+                  aero.disconnect();
                 }
               })();
               reply = null;
             } else {
               reply = "Usage: `/bot off` (disable AI), `/bot on` (enable AI), `/bot disconnect` (shutdown server)";
             }
+          }
+        } else if (cmdName === "shutdown" || cmdName === "disconnect" || cmdName === "kill") {
+          if (senderId !== "6a040cc5ea8cb0a319b0bb71" && senderId !== "68d9468821d8e8b9277a586b" && senderId !== "owner-1") {
+            reply = "Permission denied. Only Yamdut (Kartik) can run bot management commands.";
+          } else {
+            reply = "🔌 Disconnecting bot from Aero server... Bye! 👋";
+            (async () => {
+              try {
+                await aero.sendMessage(webhookDockId, reply);
+                console.log(`[BotControl] Webhook Direct ${cmdName} command requested by Yamdut.`);
+                aero.disconnect();
+              } catch (err) {
+                console.error(`[BotControl] Webhook Direct ${cmdName} failed:`, err.message);
+                aero.disconnect();
+              }
+            })();
+            reply = null;
           }
         } else {
           const matchingCommand = customCommands.find(c => {
