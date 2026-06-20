@@ -2096,6 +2096,8 @@ aero.onMessage(async (msg) => {
 // Routes configuration
 const routes = {
   "GET /api/health": health,
+  "GET /health": health,
+  "GET /healthz": health,
   "GET /api/dashboard": dashboardData,
   "GET /api/portal": portalData,
   "GET /api/install-flow": installFlow,
@@ -2173,7 +2175,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const route = routes[`${req.method} ${url.pathname}`];
     if (route) {
-      const openRoutes = ["/api/health", "/api/local-chat", "/api/local-chat/clear"];
+      const openRoutes = ["/api/health", "/health", "/healthz", "/api/local-chat", "/api/local-chat/clear"];
       if (!openRoutes.includes(url.pathname)) {
         if (!verifyDashboardAuth(req)) {
           console.warn(`[Auth] Unauthorized access attempt to ${req.method} ${url.pathname} from IP ${ip}`);
