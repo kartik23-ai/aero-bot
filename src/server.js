@@ -785,6 +785,121 @@ async function processMessageAttachments(msg) {
   }
 }
 
+// Cache of processed message IDs to prevent duplicates between webhook and sockets
+const processedIssuesCache = new Set();
+
+async function handleIssueReport(dockId, senderName, senderId, text, msgId) {
+  console.log(`[IssuesTracker] Processing issue from ${senderName} in dock ${dockId}: ${text}`);
+  
+  let title = `Issue from @${senderName}`;
+  let summary = text;
+  
+  try {
+    const prompt = `You are a helpful software engineering assistant. A user reported an issue/suggestion in Hinglish/English.
+Analyze their message and summarize it.
+Return a JSON response with exactly two fields:
+- "title": A short, clean task title (5 to 8 words maximum) in English, e.g., "Fix profile pic upload error".
+- "summary": A JSON array of string values representing key bullet points explaining the problem, e.g. ["Image upload is slow", "Sometimes shows error"].
+
+User Message: "${text}"
+
+Return ONLY the raw JSON block, nothing else. Do not wrap in markdown or backticks.`;
+
+    const aiCheck = await ai.runChatCompletion({
+      messages: [
+        { role: "system", content: "You are a professional software tracker. Return JSON only." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.2
+    });
+    
+    let resText = aiCheck.choices[0]?.message?.content?.trim() || "";
+    if (resText.startsWith("```json")) {
+      resText = resText.substring(7);
+    }
+    if (resText.startsWith("```")) {
+      resText = resText.substring(3);
+    }
+    if (resText.endsWith("```")) {
+      resText = resText.substring(0, resText.length - 3);
+    }
+    resText = resText.trim();
+    
+    try {
+      // Attempt clean up of raw bullets inside arrays: e.g. replacing "* Line," with "\"Line\","
+      let cleanText = resText;
+      cleanText = cleanText.replace(/(\[\s*|\,\s*)\*\s*([^,\s][^,\]]*)/g, '$1"$2"');
+      cleanText = cleanText.replace(/""/g, '"');
+
+      const parsed = JSON.parse(cleanText);
+      if (parsed.title) title = parsed.title;
+      if (parsed.summary) {
+        if (Array.isArray(parsed.summary)) {
+          summary = parsed.summary.map(s => `• ${s.trim().replace(/^[\*\-\u2022\u25CF]\s*/, '')}`).join('\n');
+        } else {
+          summary = parsed.summary;
+        }
+      }
+    } catch (parseErr) {
+      console.warn("[IssuesTracker] AI response JSON parsing failed, using regex fallback:", resText);
+      const titleMatch = resText.match(/"title"\s*:\s*"([^"]+)"/i);
+      if (titleMatch) title = titleMatch[1];
+      
+      // Fallback: search for list items
+      const bulletPoints = [];
+      const lines = resText.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('*') || trimmed.startsWith('-') || trimmed.startsWith('•')) {
+          bulletPoints.push(trimmed.replace(/^[\*\-\u2022\u25CF]\s*/, ''));
+        } else {
+          const strMatch = trimmed.match(/"([^"]+)"/);
+          if (strMatch && !trimmed.includes('"title"') && !trimmed.includes('"summary"')) {
+            bulletPoints.push(strMatch[1]);
+          }
+        }
+      }
+      if (bulletPoints.length > 0) {
+        summary = bulletPoints.map(s => `• ${s}`).join('\n');
+      } else {
+        summary = resText;
+      }
+    }
+  } catch (err) {
+    console.error("[IssuesTracker] AI summary generation failed, using fallback:", err.message);
+  }
+  
+  try {
+    const taskTitle = `Issue [${senderName}]: ${title}`;
+    const description = `Original message from @${senderName}:\n"${text}"\n\nAI Summary:\n${summary}`;
+    
+    console.log(`[IssuesTracker] Creating task on Aero API...`);
+    const createdTask = await aero.createWorkspaceTask(dockId, taskTitle, description, "todo");
+    console.log(`[IssuesTracker] Workspace task created successfully:`, createdTask._id);
+    
+    const replyText = `📝 **Issue Logged!**\nLogged as task: "${taskTitle}"\nWe are looking into it.`;
+    await aero.sendMessage(dockId, replyText);
+  } catch (err) {
+    console.error("[IssuesTracker] Failed to create workspace task or send reply:", err.message);
+  }
+}
+
+// Socket Task Status Change Listener
+aero.onTaskStatusChanged(async (data) => {
+  const { dockId, taskId, task, status } = data;
+  if (dockId === "69a43abb194fafb2e19317fa" && status === "done") {
+    const taskTitle = task?.title || "Unknown Task";
+    console.log(`[IssuesTracker] Task "${taskTitle}" marked as done in dock ${dockId}. Sending notification.`);
+    
+    const replyText = `✅ **Problem Solved!**\nTask completed: "${taskTitle}"\nThank you for your patience!`;
+    try {
+      await aero.sendMessage(dockId, replyText);
+    } catch (err) {
+      console.error(`[IssuesTracker] Failed to send completion notification to dock ${dockId}:`, err.message);
+    }
+  }
+});
+
 // Socket Message Listener
 aero.onMessage(async (msg) => {
   const { senderId, senderName } = extractSenderInfo(msg);
@@ -820,6 +935,29 @@ aero.onMessage(async (msg) => {
   }
 
   console.log(`[SocketMessage] Received from ${senderName} (${senderId}) in dock ${dockId}: ${text}`);
+
+  // Custom Issues & Suggestions Dock Automation Hook
+  if (dockId === "69a43abb194fafb2e19317fa") {
+    const botUserId = aero.user?._id || aero.user?.id;
+    if (senderId && botUserId && senderId !== botUserId && senderId !== "owner-1") {
+      const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
+      if (keywordsRegex.test(text)) {
+        const msgId = msg.id || msg._id || msg.messageId;
+        if (msgId && processedIssuesCache.has(msgId)) {
+          console.log(`[IssuesTracker] Socket message ${msgId} already processed. Skipping.`);
+          return;
+        }
+        if (msgId) {
+          processedIssuesCache.add(msgId);
+          setTimeout(() => processedIssuesCache.delete(msgId), 5 * 60 * 1000);
+        }
+        handleIssueReport(dockId, senderName, senderId, text, msgId).catch(console.error);
+      } else {
+        console.log(`[IssuesTracker] Message doesn't match keywords, ignoring.`);
+      }
+    }
+    return; // Bypass normal AI conversation and replies for this dock completely
+  }
 
   // Load database
   const db = loadGroupDb();
@@ -2634,6 +2772,29 @@ async function webhook(req) {
     // Download attachments & transcribe audio if needed
     await processMessageAttachments(msg);
     const textToProcess = msg.text || "";
+
+    // Custom Issues & Suggestions Dock Automation Hook
+    if (webhookDockId === "69a43abb194fafb2e19317fa") {
+      const botUserId = aero.user?._id || aero.user?.id;
+      if (senderId && botUserId && senderId !== botUserId && senderId !== "owner-1") {
+        const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
+        if (keywordsRegex.test(textToProcess)) {
+          const msgId = body.id || body._id || body.messageId;
+          if (msgId && processedIssuesCache.has(msgId)) {
+            console.log(`[IssuesTracker] Webhook message ${msgId} already processed. Skipping.`);
+            return json(200, { success: true });
+          }
+          if (msgId) {
+            processedIssuesCache.add(msgId);
+            setTimeout(() => processedIssuesCache.delete(msgId), 5 * 60 * 1000);
+          }
+          handleIssueReport(webhookDockId, senderName, senderId, textToProcess, msgId).catch(console.error);
+        } else {
+          console.log(`[IssuesTracker] Webhook message doesn't match keywords, ignoring.`);
+        }
+      }
+      return json(200, { success: true }); // Bypass normal webhook processing/AI reply
+    }
 
     const parsedCmd = bot.parseCommand(textToProcess || "");
 

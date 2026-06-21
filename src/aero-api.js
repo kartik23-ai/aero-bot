@@ -15,6 +15,7 @@ class AeroAPI {
     this.docks = [];
     this.socket = null;
     this.messageListeners = [];
+    this.taskStatusListeners = [];
     this._refreshTimer = null;
     this._connected = false;
     this._membersCache = new Map();
@@ -542,6 +543,25 @@ class AeroAPI {
     this.messageListeners.push(callback);
   }
 
+  /**
+   * Register a callback for task status change
+   */
+  onTaskStatusChanged(callback) {
+    this.taskStatusListeners.push(callback);
+  }
+
+  /**
+   * Create a workspace task
+   */
+  async createWorkspaceTask(dockId, title, description = "", status = "todo") {
+    const res = await axios.post(
+      `${API_BASE}/workspace/tasks`,
+      { dockId, title, description, status },
+      { headers: this._authHeaders() }
+    );
+    return res.data;
+  }
+
   // ─── Internal ─────────────────────────────────────────────
 
   _authHeaders() {
@@ -621,6 +641,15 @@ class AeroAPI {
             };
             listener(msg);
           } catch (e) { console.error("[AeroAPI] DM Listener error:", e); }
+        }
+      });
+
+      this.socket.on("workspace:task:status_changed", (data) => {
+        console.log(`[AeroAPI] Task status changed in dock ${data.dockId || "unknown"}: task ${data.taskId} status ${data.status}`);
+        for (const listener of this.taskStatusListeners) {
+          try {
+            listener(data);
+          } catch (e) { console.error("[AeroAPI] TaskStatusListener error:", e); }
         }
       });
 
