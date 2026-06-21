@@ -887,7 +887,7 @@ Return ONLY the raw JSON block, nothing else. Do not wrap in markdown or backtic
 // Socket Task Status Change Listener
 aero.onTaskStatusChanged(async (data) => {
   const { dockId, taskId, task, status } = data;
-  if (dockId === "6a098ac946dc268297b10e39" && status === "done") {
+  if (dockId === "69a43abb194fafb2e19317fa" && status === "done") {
     const taskTitle = task?.title || "Unknown Task";
     console.log(`[IssuesTracker] Task "${taskTitle}" marked as done in dock ${dockId}. Sending notification.`);
     
@@ -937,11 +937,16 @@ aero.onMessage(async (msg) => {
   console.log(`[SocketMessage] Received from ${senderName} (${senderId}) in dock ${dockId}: ${text}`);
 
   // Custom Issues & Suggestions Dock Automation Hook
-  if (dockId === "6a098ac946dc268297b10e39") {
+  if (dockId === "69a43abb194fafb2e19317fa") {
     const botUserId = aero.user?._id || aero.user?.id;
     if (senderId && botUserId && senderId !== botUserId && senderId !== "owner-1") {
-      const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
-      if (keywordsRegex.test(text)) {
+      const trimmedText = text.trim();
+      if (trimmedText.startsWith("/problem")) {
+        const problemDetails = trimmedText.substring(8).trim();
+        if (!problemDetails) {
+          await aero.sendMessage(dockId, `⚠️ Please provide details with the command, e.g.: \`/problem description of your issue\``);
+          return;
+        }
         const msgId = msg.id || msg._id || msg.messageId;
         if (msgId && processedIssuesCache.has(msgId)) {
           console.log(`[IssuesTracker] Socket message ${msgId} already processed. Skipping.`);
@@ -951,9 +956,29 @@ aero.onMessage(async (msg) => {
           processedIssuesCache.add(msgId);
           setTimeout(() => processedIssuesCache.delete(msgId), 5 * 60 * 1000);
         }
-        handleIssueReport(dockId, senderName, senderId, text, msgId).catch(console.error);
+        handleIssueReport(dockId, senderName, senderId, problemDetails, msgId).catch(console.error);
       } else {
-        console.log(`[IssuesTracker] Message doesn't match keywords, ignoring.`);
+        const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
+        if (keywordsRegex.test(text)) {
+          const msgId = msg.id || msg._id || msg.messageId;
+          if (msgId && processedIssuesCache.has(msgId)) {
+            console.log(`[IssuesTracker] Socket message ${msgId} already processed. Skipping.`);
+            return;
+          }
+          if (msgId) {
+            processedIssuesCache.add(msgId);
+            setTimeout(() => processedIssuesCache.delete(msgId), 5 * 60 * 1000);
+          }
+          const promptMsg = `Hello @${senderName}! It looks like you're reporting an issue or suggestion. 
+
+To help us track and resolve this efficiently, please use the \`/problem\` command followed by your description in a single message.
+For example: \`/problem App is lagging during image uploads\`
+
+I will automatically log it as a task and keep you updated! 😊`;
+          await aero.sendMessage(dockId, promptMsg);
+        } else {
+          console.log(`[IssuesTracker] Message doesn't match keywords, ignoring.`);
+        }
       }
     }
     return; // Bypass normal AI conversation and replies for this dock completely
@@ -2774,11 +2799,16 @@ async function webhook(req) {
     const textToProcess = msg.text || "";
 
     // Custom Issues & Suggestions Dock Automation Hook
-    if (webhookDockId === "6a098ac946dc268297b10e39") {
+    if (webhookDockId === "69a43abb194fafb2e19317fa") {
       const botUserId = aero.user?._id || aero.user?.id;
       if (senderId && botUserId && senderId !== botUserId && senderId !== "owner-1") {
-        const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
-        if (keywordsRegex.test(textToProcess)) {
+        const trimmedText = textToProcess.trim();
+        if (trimmedText.startsWith("/problem")) {
+          const problemDetails = trimmedText.substring(8).trim();
+          if (!problemDetails) {
+            await aero.sendMessage(webhookDockId, `⚠️ Please provide details with the command, e.g.: \`/problem description of your issue\``);
+            return json(200, { success: true });
+          }
           const msgId = body.id || body._id || body.messageId;
           if (msgId && processedIssuesCache.has(msgId)) {
             console.log(`[IssuesTracker] Webhook message ${msgId} already processed. Skipping.`);
@@ -2788,9 +2818,29 @@ async function webhook(req) {
             processedIssuesCache.add(msgId);
             setTimeout(() => processedIssuesCache.delete(msgId), 5 * 60 * 1000);
           }
-          handleIssueReport(webhookDockId, senderName, senderId, textToProcess, msgId).catch(console.error);
+          handleIssueReport(webhookDockId, senderName, senderId, problemDetails, msgId).catch(console.error);
         } else {
-          console.log(`[IssuesTracker] Webhook message doesn't match keywords, ignoring.`);
+          const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
+          if (keywordsRegex.test(textToProcess)) {
+            const msgId = body.id || body._id || body.messageId;
+            if (msgId && processedIssuesCache.has(msgId)) {
+              console.log(`[IssuesTracker] Webhook message ${msgId} already processed. Skipping.`);
+              return json(200, { success: true });
+            }
+            if (msgId) {
+              processedIssuesCache.add(msgId);
+              setTimeout(() => processedIssuesCache.delete(msgId), 5 * 60 * 1000);
+            }
+            const promptMsg = `Hello @${senderName}! It looks like you're reporting an issue or suggestion. 
+
+To help us track and resolve this efficiently, please use the \`/problem\` command followed by your description in a single message.
+For example: \`/problem App is lagging during image uploads\`
+
+I will automatically log it as a task and keep you updated! 😊`;
+            await aero.sendMessage(webhookDockId, promptMsg);
+          } else {
+            console.log(`[IssuesTracker] Webhook message doesn't match keywords, ignoring.`);
+          }
         }
       }
       return json(200, { success: true }); // Bypass normal webhook processing/AI reply
