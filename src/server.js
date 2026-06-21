@@ -887,7 +887,7 @@ Return ONLY the raw JSON block, nothing else. Do not wrap in markdown or backtic
 // Socket Task Status Change Listener
 aero.onTaskStatusChanged(async (data) => {
   const { dockId, taskId, task, status } = data;
-  if (dockId === "69a43abb194fafb2e19317fa" && status === "done") {
+  if (dockId === "6a098ac946dc268297b10e39" && status === "done") {
     const taskTitle = task?.title || "Unknown Task";
     console.log(`[IssuesTracker] Task "${taskTitle}" marked as done in dock ${dockId}. Sending notification.`);
     
@@ -937,7 +937,7 @@ aero.onMessage(async (msg) => {
   console.log(`[SocketMessage] Received from ${senderName} (${senderId}) in dock ${dockId}: ${text}`);
 
   // Custom Issues & Suggestions Dock Automation Hook
-  if (dockId === "69a43abb194fafb2e19317fa") {
+  if (dockId === "6a098ac946dc268297b10e39") {
     const botUserId = aero.user?._id || aero.user?.id;
     if (senderId && botUserId && senderId !== botUserId && senderId !== "owner-1") {
       const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
@@ -2774,7 +2774,7 @@ async function webhook(req) {
     const textToProcess = msg.text || "";
 
     // Custom Issues & Suggestions Dock Automation Hook
-    if (webhookDockId === "69a43abb194fafb2e19317fa") {
+    if (webhookDockId === "6a098ac946dc268297b10e39") {
       const botUserId = aero.user?._id || aero.user?.id;
       if (senderId && botUserId && senderId !== botUserId && senderId !== "owner-1") {
         const keywordsRegex = /\b(issue|problem|lag|glitch|error|bug|fail|crash|suggestion|slow)\b/i;
