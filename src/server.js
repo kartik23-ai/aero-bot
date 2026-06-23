@@ -63,6 +63,10 @@ const lastAiReplyTime = new Map();
 let lastDocksFetchTime = 0;
 let inFlightDocksFetch = null;
 
+// Global regex patterns for abusive language and profanity detection
+const globalAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi|chutiya|gandu|lund|gaand|fuck|bitch|asshole|bastard|randi|bhadva)\b/i;
+const globalSuspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chut|gand|lund|gaand|saal|kutt|kamin|haram|raand|randi|saala|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd|chutiya|gandu|fuck|bitch|asshole|bastard|bhadva|kamine|kutta)/i;
+
 // Rate limit warning messages to avoid spamming the Aero server (5 seconds cooldown per group per violation type)
 const lastWarningTime = new Map();
 function shouldSendWarning(dockId, type) {
@@ -1456,11 +1460,8 @@ I will automatically log it as a task and keep you updated! 😊`;
     }
 
     if (groupSettings.abusiveFilter) {
-      const localAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi)\b/i;
-      isAbusiveViolation = localAbusiveRegex.test(text);
-
-      const suspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chut|gand|lund|gaand|saal|kutt|kamin|haram|raand|randi|saala|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
-      const isSuspicious = suspiciousRegex.test(text);
+      isAbusiveViolation = globalAbusiveRegex.test(text);
+      const isSuspicious = globalSuspiciousRegex.test(text);
 
       if (!isAbusiveViolation && isSuspicious && ai.enabled && ai.keys && ai.keys.length > 0) {
         try {
@@ -1468,7 +1469,7 @@ I will automatically log it as a task and keep you updated! 😊`;
             messages: [
               {
                 role: "system",
-                content: "You are a content moderation assistant. Check if the user message contains severe Hinglish/Hindi gaalis (specifically mc, bc, madarchod, behnchod, bkl, bhosdike, bakchod, bakchodi, or extreme equivalents). Do NOT flag mild slang, casual teasing, common colloquial words, or light insults (such as chutiya, gandu, lund, gaand, saala, kutta, kamina, harami, etc.) as abusive. We want a relaxed filter that only flags extreme/severe profanity. Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
+                content: "You are a content moderation assistant. Check if the user message contains any abusive language, gaalis, profanity, vulgarity, or insults in Hindi, Hinglish, or English (including words like mc, bc, madarchod, behnchod, bkl, bhosdike, chutiya, gandu, lund, gaand, harami, raand, bhadva, fuck, bitch, asshole, bastard, etc.). Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
               },
               {
                 role: "user",
@@ -3687,7 +3688,8 @@ module.exports = {
   saveReminders,
   checkAndSendReminders,
   sendDailyDigests,
-  loadChatsCacheIfNeeded
+  loadChatsCacheIfNeeded,
+  globalAbusiveRegex
 };
 
 function normalizeGroupTargets(groupIds) {
@@ -4195,7 +4197,12 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
       userContext += `Recent Group Chat History:\n` + recentMsgs.map(m => `[${m.senderName}]: ${m.text}`).join("\n") + "\n";
     }
 
-    const systemPrompt = `You are a savage, funny meme generator for a group chat. 
+    let systemPromptAbusiveNote = "";
+    if (groupSettings.abusiveFilter) {
+      systemPromptAbusiveNote = `\nCRITICAL: The abusive language filter is ENABLED for this group. You MUST NOT use any abusive language, gaalis, profanity, vulgarity, bad words, or insults in Hindi, Hinglish, or English (e.g. no chutiya, gandu, lund, gaand, mc, bc, fuck, bitch, etc.) under any circumstances. Keep captions completely clean.`;
+    }
+
+    const systemPrompt = `You are a savage, funny meme generator for a group chat. ${systemPromptAbusiveNote}
 Your goal is to select the perfect meme template and write highly engaging, funny, and roasted captions (in a mix of English and Hinglish/Hindi) based on the user's topic, recent chat history, or member facts.
 
 Available templates:
@@ -4237,9 +4244,19 @@ Ensure the text is extremely funny, relevant to the topic/context, and uses Indi
       throw new Error("Invalid response format from AI");
     }
 
+    if (groupSettings.abusiveFilter) {
+      const isTopAbusive = globalAbusiveRegex.test(resJson.topText);
+      const isBottomAbusive = globalAbusiveRegex.test(resJson.bottomText);
+      if (isTopAbusive || isBottomAbusive) {
+        console.warn("[MemeGen] Abusive content detected in generated meme text. Falling back to safe clean captions...");
+        resJson.topText = "Group chat is wild";
+        resJson.bottomText = "Abusive filter on duty";
+        resJson.template = "drake";
+      }
+    }
+
     const base64Uri = await generateMemeBase64(resJson.template, resJson.topText, resJson.bottomText);
-    const caption = `🎭 **Custom Meme Maker & Roaster**\nTemplate: *${resJson.template}*\nTop: *${resJson.topText}*\nBottom: *${resJson.bottomText}*`;
-    await aero.sendMessage(dockId, caption, base64Uri);
+    await aero.sendMessage(dockId, "", base64Uri);
   } catch (err) {
     console.error("[Meme Command Error]:", err.message);
     await aero.sendMessage(dockId, `❌ Meme generate karne me error aaya: ${err.message}`);
