@@ -521,14 +521,135 @@ async function fetchRedditMeme(subreddit = "", depth = 0) {
   if (depth > 5) {
     throw new Error("Could not find any safe non-NSFW memes after 5 retries.");
   }
-  const url = subreddit ? `https://meme-api.com/gimme/${subreddit}` : "https://meme-api.com/gimme";
-  const res = await axios.get(url, { timeout: 10000 });
-  const data = res.data;
-  if (data.nsfw || data.spoiler) {
-    console.warn(`[MemeGen] Fetched meme was NSFW/Spoiler, retrying (depth: ${depth + 1})...`);
-    return fetchRedditMeme(subreddit, depth + 1);
+  try {
+    const url = subreddit ? `https://meme-api.com/gimme/${subreddit}` : "https://meme-api.com/gimme";
+    const res = await axios.get(url, { timeout: 10000 });
+    const data = res.data;
+    if (data.nsfw || data.spoiler) {
+      console.warn(`[MemeGen] Fetched meme was NSFW/Spoiler, retrying (depth: ${depth + 1})...`);
+      return fetchRedditMeme(subreddit, depth + 1);
+    }
+    return data;
+  } catch (apiErr) {
+    console.warn("[MemeGen] meme-api.com failed, trying direct Reddit JSON fallback:", apiErr.message);
+    try {
+      const sub = subreddit || "memes";
+      const directUrl = `https://www.reddit.com/r/${sub}/hot.json?limit=50`;
+      const res = await axios.get(directUrl, {
+        headers: { "User-Agent": "Mozilla/5.0 (AeroBot/1.0)" },
+        timeout: 10000
+      });
+      const children = res.data?.data?.children || [];
+      const valid = [];
+      for (const child of children) {
+        const post = child.data;
+        if (!post || post.is_self || post.is_video) continue;
+        if (post.nsfw || post.over_18 || post.spoiler) continue;
+        const imgUrl = post.url;
+        if (imgUrl && (imgUrl.endsWith(".jpg") || imgUrl.endsWith(".jpeg") || imgUrl.endsWith(".png") || imgUrl.endsWith(".webp"))) {
+          valid.push({
+            title: post.title,
+            url: imgUrl,
+            subreddit: post.subreddit
+          });
+        }
+      }
+      if (valid.length > 0) {
+        const randomIndex = Math.floor(Math.random() * valid.length);
+        return valid[randomIndex];
+      }
+    } catch (directErr) {
+      console.error("[MemeGen] Direct Reddit JSON fallback also failed:", directErr.message);
+    }
+    throw apiErr;
   }
-  return data;
+}
+
+async function searchRedditMeme(query) {
+  try {
+    // 1. Search in popular meme subreddits first for relevance
+    const subs = ["memes", "dankmemes", "indianmemes", "IndianDankMemes", "bollywoodmemes", "programmerhumor", "gamingmemes"];
+    const subQuery = `https://www.reddit.com/r/${subs.join("+")}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&limit=30&sort=relevance`;
+    console.log(`[RedditSearch] Querying: ${subQuery}`);
+    let res = await axios.get(subQuery, {
+      headers: { 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+      },
+      timeout: 10000
+    });
+    
+    let children = res.data?.data?.children || [];
+    
+    // 2. If nothing found, search globally on Reddit
+    if (children.length === 0) {
+      const globalQuery = `https://www.reddit.com/search.json?q=${encodeURIComponent(query + " meme")}&limit=30&sort=relevance`;
+      console.log(`[RedditSearch] Fallback Querying: ${globalQuery}`);
+      res = await axios.get(globalQuery, {
+        headers: { 
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+        },
+        timeout: 10000
+      });
+      children = res.data?.data?.children || [];
+    }
+    
+    const validMemes = [];
+    for (const child of children) {
+      const post = child.data;
+      if (!post || post.is_self || post.is_video) continue;
+      if (post.nsfw || post.over_18 || post.spoiler) continue;
+      
+      const imgUrl = post.url;
+      if (imgUrl && (imgUrl.endsWith(".jpg") || imgUrl.endsWith(".jpeg") || imgUrl.endsWith(".png") || imgUrl.endsWith(".gif") || imgUrl.endsWith(".webp") || imgUrl.includes("preview.redd.it") || imgUrl.includes("imgur.com"))) {
+        validMemes.push({
+          title: post.title,
+          url: imgUrl,
+          subreddit: post.subreddit
+        });
+      }
+    }
+    
+    if (validMemes.length > 0) {
+      console.log(`[RedditSearch] Found ${validMemes.length} matches on Reddit. Selecting top result.`);
+      return validMemes[0];
+    }
+  } catch (err) {
+    console.error("[RedditSearch] Error search reddit memes:", err.message);
+  }
+  return null;
+}
+
+function extractAndParseJson(text) {
+  if (!text) throw new Error("Empty text input");
+  try {
+    return JSON.parse(text.trim());
+  } catch (e) {
+    let cleaned = text.trim();
+    cleaned = cleaned.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch (e2) {
+      const start = cleaned.indexOf("{");
+      const end = cleaned.lastIndexOf("}");
+      if (start !== -1 && end !== -1 && end > start) {
+        const candidate = cleaned.substring(start, end + 1);
+        try {
+          return JSON.parse(candidate);
+        } catch (e3) {
+          try {
+            const fixedCandidate = candidate
+              .replace(/,\s*([}\]])/g, '$1')
+              .replace(/\\n/g, ' ')
+              .replace(/\n/g, ' ');
+            return JSON.parse(fixedCandidate);
+          } catch (e4) {
+            throw new Error(`JSON parse failed: ${e.message}. Candidate: ${candidate.substring(0, 100)}`);
+          }
+        }
+      }
+      throw e;
+    }
+  }
 }
 
 async function serperImageSearch(query) {
@@ -2145,8 +2266,35 @@ I will automatically log it as a task and keep you updated! 😊`;
         reply = null;
       }
     } else if (cmdName === "meme") {
+      if (groupSettings.botDisabled) {
+        console.log(`[BotControl] Bot is disabled for dock ${dockId}. Skipping meme command.`);
+        return;
+      }
       reply = null;
       handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings);
+    } else if (cmdName === "play") {
+      if (groupSettings.botDisabled) {
+        console.log(`[BotControl] Bot is disabled for dock ${dockId}. Skipping play command.`);
+        return;
+      }
+      if (!argsText) {
+        reply = "Please specify a song name. E.g. `/play Blinding Lights`";
+      } else {
+        reply = null;
+        const songName = argsText.trim();
+        (async () => {
+          try {
+            console.log(`[PlayCommand] User requested song: "${songName}"`);
+            await aero.sendMessage(dockId, `🎵 *Searching and downloading:* "${songName}"...`);
+            const { downloadYoutubeAudio } = require("./music-downloader");
+            const base64Audio = await downloadYoutubeAudio(songName);
+            await aero.sendMessage(dockId, "", null, null, base64Audio);
+          } catch (err) {
+            console.error("[PlayCommand] Error processing music:", err.message);
+            await aero.sendMessage(dockId, `❌ Failed to download or convert audio: ${err.message}`);
+          }
+        })();
+      }
     } else if (cmdName === "digest") {
       reply = handleDigestCommand(argsText, groupSettings, canEdit);
     } else if (cmdName === "remind") {
@@ -3233,8 +3381,35 @@ I will automatically log it as a task and keep you updated! 😊`;
             reply = null;
           }
         } else if (cmdName === "meme") {
+          if (groupSettings.botDisabled) {
+            console.log(`[BotControl] Bot is disabled for dock ${webhookDockId}. Skipping webhook meme command.`);
+            return;
+          }
           reply = null;
           handleMemeCommand(webhookDockId, senderId, senderName, argsText, groupSettings);
+        } else if (cmdName === "play") {
+          if (groupSettings.botDisabled) {
+            console.log(`[BotControl] Bot is disabled for dock ${webhookDockId}. Skipping webhook play command.`);
+            return;
+          }
+          if (!argsText) {
+            reply = "Please specify a song name. E.g. `/play Blinding Lights`";
+          } else {
+            reply = null;
+            const songName = argsText.trim();
+            (async () => {
+              try {
+                console.log(`[WebhookPlayCommand] User requested song: "${songName}"`);
+                await aero.sendMessage(webhookDockId, `🎵 *Searching and downloading:* "${songName}"...`);
+                const { downloadYoutubeAudio } = require("./music-downloader");
+                const base64Audio = await downloadYoutubeAudio(songName);
+                await aero.sendMessage(webhookDockId, "", null, null, base64Audio);
+              } catch (err) {
+                console.error("[WebhookPlayCommand] Error processing music:", err.message);
+                await aero.sendMessage(webhookDockId, `❌ Failed to download or convert audio: ${err.message}`);
+              }
+            })();
+          }
         } else if (cmdName === "digest") {
           reply = handleDigestCommand(argsText, groupSettings, isSenderAdmin);
         } else if (cmdName === "remind") {
@@ -4206,6 +4381,7 @@ Please format the output exactly as a mini gossip newspaper/bulletin with the fo
 
 Keep it concise, highly readable, and fun!`;
 
+        let digestText = "";
         try {
           const digestResponse = await ai.runChatCompletion({
             messages: [
@@ -4213,14 +4389,45 @@ Keep it concise, highly readable, and fun!`;
               { role: "user", content: prompt }
             ]
           });
-          const digestText = digestResponse.choices[0]?.message?.content || "";
-          
+          digestText = digestResponse.choices[0]?.message?.content || "";
+        } catch (err) {
+          console.error(`[DailyDigest] Primary digest generation failed for group ${dockId}:`, err.message);
+        }
+
+        // If digest generation is empty, too short, or missing critical keywords, fall back to OpenRouter DeepSeek
+        if (digestText.length < 100 || !digestText.toLowerCase().includes("spammer")) {
+          console.warn(`[DailyDigest] Digest for ${dockId} was too short or malformed. Trying OpenRouter fallback...`);
+          try {
+            const { providers } = require("./providers");
+            const fallbackResponse = await providers.chatCompletion([
+              { role: "system", content: "You are a gossip newspaper columnist." },
+              { role: "user", content: prompt }
+            ], { model: "openrouter-deepseek" });
+            const candidateText = fallbackResponse.choices[0]?.message?.content || "";
+            if (candidateText.length >= 100 && candidateText.toLowerCase().includes("spammer")) {
+              digestText = candidateText;
+            }
+          } catch (fallbackErr) {
+            console.error(`[DailyDigest] OpenRouter fallback also failed for group ${dockId}:`, fallbackErr.message);
+          }
+        }
+
+        // Final local template fallback if all AI options failed to generate a proper bulletin
+        if (digestText.length < 100 || !digestText.toLowerCase().includes("spammer")) {
+          console.log(`[DailyDigest] Using local template fallback for group ${dockId}`);
+          digestText = `📰 **AERO DAILY GOSSIP BULLETIN** 📰\n\n` +
+                       `👑 **Spammer of the Day**: @${spammer} (sent ${maxMsgs} messages! Sabse zyada active active active!)\n\n` +
+                       `🔥 **Hot Topic of the Day**: Coding debates and server status checkups. Sab log pareshaan lag rhe the.\n\n` +
+                       `🎭 **Top Roast of the Day**: @${spammer} keeps writing messages but the server still won't build! Aao sab milkar iska support karein.`;
+        }
+
+        try {
           if (digestText.trim()) {
             await aero.sendMessage(dockId, digestText);
             console.log(`[DailyDigest] Successfully sent daily digest to group ${dockId}`);
           }
-        } catch (err) {
-          console.error(`[DailyDigest] Failed to generate digest for group ${dockId}:`, err.message);
+        } catch (sendErr) {
+          console.error(`[DailyDigest] Failed to send digest message to group ${dockId}:`, sendErr.message);
         }
       }
     }
@@ -4267,7 +4474,17 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
       movies: "moviememes",
       cricket: "cricketshitpost",
       school: "schoolmemes",
-      reddit: "dankmemes"
+      reddit: "dankmemes",
+      desi: "indianmemes",
+      indian: "indianmemes",
+      bollywood: "bollywoodmemes",
+      ipl: "ipl",
+      exam: "JEENEETards",
+      jee: "JEENEETards",
+      neet: "JEENEETards",
+      college: "collegememesIndia",
+      relatable: "indianmemes",
+      dank: "IndianDankMemes"
     };
 
     if (!topic.startsWith("@")) {
@@ -4286,7 +4503,21 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
         }
       }
 
-      // 2b. If it is a custom topic (like "wah kya scene he"), search Google Images via Serper
+      // 2b. Priority: Search Reddit using custom query search
+      try {
+        console.log(`[MemeCommand] Searching Reddit for custom phrase: "${topic}"...`);
+        const redditMeme = await searchRedditMeme(topic);
+        if (redditMeme) {
+          console.log(`[MemeCommand] Downloading Reddit Search result: ${redditMeme.url}`);
+          const base64Uri = await fetchImageBase64(redditMeme.url);
+          await aero.sendMessage(dockId, "", base64Uri);
+          return;
+        }
+      } catch (err) {
+        console.error("[MemeCommand] Reddit search failed:", err.message);
+      }
+
+      // 2c. Fallback: Search Google Images via Serper
       try {
         const searchQuery = `${topic} meme`;
         console.log(`[MemeCommand] Searching Serper.dev for images: "${searchQuery}"...`);
@@ -4309,6 +4540,7 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
       }
     }
 
+    // 3. Fallback to AI generation if search returned nothing
     let userContext = "";
     if (topic) {
       userContext += `User Topic: ${topic}\n`;
@@ -4378,17 +4610,51 @@ You MUST respond in JSON format ONLY:
 }
 Do not include markdown code block formatting in your response, return raw JSON string.`;
 
-    const response = await ai.runChatCompletion({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Generate a meme for context:\n${userContext}` }
-      ],
-      temperature: 0.8
-    });
+    let response;
+    try {
+      response = await ai.runChatCompletion({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Generate a meme for context:\n${userContext}` }
+        ],
+        temperature: 0.8
+      });
+    } catch (aiErr) {
+      console.warn("[MemeCommand] LLM completion failed, falling back to direct Reddit search/random meme:", aiErr.message);
+      if (topic && !topic.startsWith("@")) {
+        try {
+          const redditMeme = await searchRedditMeme(topic);
+          if (redditMeme) {
+            const base64Uri = await fetchImageBase64(redditMeme.url);
+            await aero.sendMessage(dockId, "", base64Uri);
+            return;
+          }
+        } catch (searchErr) {
+          console.warn("[MemeCommand] Fallback search also failed:", searchErr.message);
+        }
+      }
+      // Failover to random hot Reddit meme
+      const memeData = await fetchRedditMeme("");
+      const base64Uri = await fetchImageBase64(memeData.url);
+      await aero.sendMessage(dockId, "", base64Uri);
+      return;
+    }
 
     const resText = (response.choices[0]?.message?.content || "").trim();
-    const cleanedJsonStr = resText.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
-    const resJson = JSON.parse(cleanedJsonStr);
+    let resJson;
+    try {
+      resJson = extractAndParseJson(resText);
+    } catch (parseErr) {
+      console.warn("[MemeCommand] Failed to parse AI response JSON, using fallback captions:", parseErr.message);
+      resJson = {
+        fluxPrompt: "A funny meme of a computer programmer looking surprised. In bold white text: 'WHEN THE CODE WORKS' and 'BUT YOU DON'T KNOW WHY'.",
+        fallback: {
+          template: "drake",
+          topText: "AI returned invalid format",
+          bottomText: "But here is a meme anyway"
+        }
+      };
+    }
     
     if (!resJson.fluxPrompt || !resJson.fallback || !resJson.fallback.template) {
       throw new Error("Invalid response format from AI");
@@ -4425,7 +4691,21 @@ Do not include markdown code block formatting in your response, return raw JSON 
     await aero.sendMessage(dockId, "", base64Uri);
   } catch (err) {
     console.error("[Meme Command Error]:", err.message);
-    await aero.sendMessage(dockId, `❌ Meme generate karne me error aaya: ${err.message}`);
+    try {
+      console.log("[MemeCommand] Attempting to deliver completely random Reddit meme as last-resort fallback...");
+      const memeData = await fetchRedditMeme("");
+      const base64Uri = await fetchImageBase64(memeData.url);
+      await aero.sendMessage(dockId, "", base64Uri);
+    } catch (fallbackErr) {
+      console.error("[MemeCommand] Last-resort fallback also failed:", fallbackErr.message);
+      // Construct Drake fallback meme
+      try {
+        const base64Uri = await generateMemeBase64("drake", "Error generating custom meme", "But bot still sends a meme");
+        await aero.sendMessage(dockId, "", base64Uri);
+      } catch (finalErr) {
+        await aero.sendMessage(dockId, `❌ Meme generate karne me error aaya: ${err.message}`);
+      }
+    }
   }
 }
 
@@ -4487,8 +4767,7 @@ Do not include markdown code block formatting in your response. Return raw JSON 
     });
 
     const resText = (response.choices[0]?.message?.content || "").trim();
-    const cleanedJsonStr = resText.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
-    const resJson = JSON.parse(cleanedJsonStr);
+    const resJson = extractAndParseJson(resText);
 
     if (!resJson.triggerTimeMs || !resJson.task) {
       throw new Error("Could not parse schedule or task description.");

@@ -1052,8 +1052,7 @@ class ProviderManager {
       
       const spaces = [
         { name: "black-forest-labs/FLUX.1-dev", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 28 } },
-        { name: "multimodalart/FLUX.1-schnell", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 4 } },
-        { name: "stabilityai/stable-diffusion-3.5-large", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 28 } }
+        { name: "multimodalart/FLUX.1-schnell", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 4 } }
       ];
 
       for (const space of spaces) {
