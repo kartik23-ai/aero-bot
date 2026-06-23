@@ -34,6 +34,12 @@ const ADMIN_COMMANDS = new Set([
   "slowmode5",
   "slow10",
   "slowmode10",
+  "slowoff",
+  "slowmodeoff",
+  "slow0",
+  "slowmode0",
+  "aislow",
+  "aislowmode",
   "purge",
   "reportreview",
   "summary",
@@ -70,7 +76,8 @@ class AeroGroupGuard {
       welcomeMessage: options.welcomeMessage || DEFAULTS.welcomeMessage,
       allowPrivateMessages: options.allowPrivateMessages === true,
       locked: false,
-      slowmodeSeconds: 0
+      slowmodeSeconds: 0,
+      aiSlowmodeSec: 0
     };
     this.faq = options.faq || DEFAULTS.faq;
     this.warns = new Map();
@@ -262,6 +269,14 @@ class AeroGroupGuard {
       case "slow10":
       case "slowmode10":
         return this.setSlowmode("10");
+      case "slowoff":
+      case "slowmodeoff":
+      case "slow0":
+      case "slowmode0":
+        return this.setSlowmode("off");
+      case "aislow":
+      case "aislowmode":
+        return this.setAiSlowmode(parsed.argsText);
       case "purge":
         return this.purgeMessages(parsed.argsText, context);
       case "reportreview":
@@ -425,6 +440,20 @@ class AeroGroupGuard {
     this.config.slowmodeSeconds = seconds;
     this.log("slowmode", { seconds, ok: true });
     return seconds === 0 ? "Slowmode disabled." : `Slowmode set to ${seconds} seconds.`;
+  }
+
+  setAiSlowmode(argsText) {
+    const val = argsText.trim().toLowerCase();
+    if (val === "off" || val === "disable") {
+      this.config.aiSlowmodeSec = 0;
+      this.log("aislow", { seconds: 0, ok: true });
+      return "AI chatbot slowmode disabled.";
+    }
+    const seconds = Number.parseInt(val, 10);
+    if (!Number.isFinite(seconds) || seconds < 0) return "Please specify AI slowmode duration in seconds.";
+    this.config.aiSlowmodeSec = seconds;
+    this.log("aislow", { seconds, ok: true });
+    return seconds === 0 ? "AI chatbot slowmode disabled." : `AI chatbot slowmode set to ${seconds} seconds.`;
   }
 
   purgeMessages(argsText, context) {

@@ -1527,7 +1527,7 @@ I will automatically log it as a task and keep you updated! 😊`;
 
   // Determine if we need to check admin roles
   const cmdName = parsedCmd?.name;
-  const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
+  const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "slowoff", "slowmodeoff", "slow0", "slowmode0", "aislow", "aislowmode", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
 
   // Bot must be an admin/owner to process moderation or check roles
   let isBotAdmin = targetDock && (targetDock.role === "admin" || targetDock.role === "owner");
@@ -1766,7 +1766,7 @@ I will automatically log it as a task and keep you updated! 😊`;
     const cmdName = parsedCmd.name;
     const argsText = parsedCmd.argsText || "";
 
-    const isAdminCmd = ["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
+    const isAdminCmd = ["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "slowoff", "slowmodeoff", "slow0", "slowmode0", "aislow", "aislowmode", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
 
     if (isAdminCmd && !canEdit) {
       try {
@@ -1783,8 +1783,8 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
     }
 
-    if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq"].includes(cmdName)) {
-      if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "rename", "announce", "setfaq"].includes(cmdName)) {
+    if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "slowoff", "slowmodeoff", "slow0", "slowmode0", "aislow", "aislowmode", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "toggleadmin", "warn", "clearwarns", "rename", "announce", "setfaq"].includes(cmdName)) {
+      if (["setrules", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "slowoff", "slowmodeoff", "slow0", "slowmode0", "aislow", "aislowmode", "lock", "lockgroup", "unlock", "unlockgroup", "abusive", "rename", "announce", "setfaq"].includes(cmdName)) {
         if (!canEdit) {
           reply = "Permission denied. Only dock owner (or authorized admins) can change settings.";
         } else {
@@ -1849,6 +1849,41 @@ I will automatically log it as a task and keep you updated! 😊`;
                 reply = "⏳ Slowmode set to 10 seconds for this group on the server.";
               } catch (err) {
                 reply = `⏳ Slowmode set to 10 seconds locally, but failed to update on Aero server: ${err.message}`;
+              }
+              break;
+            case "slowoff":
+            case "slowmodeoff":
+            case "slow0":
+            case "slowmode0":
+              groupSettings.slowmodeSeconds = 0;
+              saveGroupDb(db);
+              try {
+                await aero.updateDockSettings(dockId, { slowMode: 0 });
+                reply = "⏳ Slowmode disabled for this group on the server.";
+              } catch (err) {
+                reply = `⏳ Slowmode disabled locally, but failed to update on Aero server: ${err.message}`;
+              }
+              break;
+            case "aislow":
+            case "aislowmode":
+              if (!argsText) {
+                reply = "Please specify AI slowmode duration in seconds (or 'off'). E.g. /aislow 10";
+              } else {
+                const val = argsText.toLowerCase();
+                if (val === "off" || val === "disable" || val === "0") {
+                  groupSettings.aiSlowmodeSec = 0;
+                  saveGroupDb(db);
+                  reply = "⏳ AI chatbot slowmode disabled for this group.";
+                } else {
+                  const secs = parseInt(val, 10);
+                  if (isNaN(secs) || secs < 0) {
+                    reply = "Please specify duration in seconds.";
+                  } else {
+                    groupSettings.aiSlowmodeSec = secs;
+                    saveGroupDb(db);
+                    reply = `⏳ AI chatbot slowmode set to ${secs} seconds for this group.`;
+                  }
+                }
               }
               break;
             case "lock":
@@ -2894,7 +2929,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       isSenderAdmin = true;
     } else if (webhookDockId !== "unknown" && parsedCmd) {
       const cmdName = parsedCmd.name;
-      const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
+      const isAdminCmd = ["kick", "ban", "mute", "unmute", "warn", "clearwarns", "setwelcome", "setrules", "setprefix", "lock", "unlock", "lockgroup", "unlockgroup", "slowmode", "slow5", "slowmode5", "slow10", "slowmode10", "slowoff", "slowmodeoff", "slow0", "slowmode0", "aislow", "aislowmode", "abusive", "toggleadmin", "rename", "announce", "setfaq", "summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName);
       if (isAdminCmd) {
         if (body.adminIds && Array.isArray(body.adminIds) && body.adminIds.includes(senderId)) {
           isSenderAdmin = true;
