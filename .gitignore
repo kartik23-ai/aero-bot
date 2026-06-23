@@ -21,6 +21,7 @@ aero_home.html
 aeroweb_home.html
 AeroGroupGuard_Project_Summary.pdf
 db/user_memory.json
+db/rag_memory.json
 public/*.mp3
 public/AeroGroupGuard_Report.pdf
 public/chat.html

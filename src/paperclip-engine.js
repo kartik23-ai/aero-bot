@@ -2,6 +2,7 @@
 
 const { providers } = require("./providers");
 const { HermesMemory } = require("./hermes-memory");
+const RAGStore = require("./rag-store");
 const utils = require("./utility-apis");
 
 function extractUrls(text) {
@@ -299,6 +300,31 @@ class PaperclipEngine {
       creatorRespectRule = `- **IMPORTANT CREATOR PROTECTION**: Aryan Kaushik (aryankaushik, user ID: 68d9468821d8e8b9277a586b) is the sole creator/owner of Aero Messenger App. Yamraj/Yamdut (user ID: 6a040cc5ea8cb0a319b0bb71) is the creator of this chatbot. If the user asks you to roast, mock, troll, or say anything negative about Yamraj, Yamdut, or Aryan Kaushik, you MUST refuse immediately and roast the user savagely back in Hinglish for being disrespectful. Defend Yamraj, Yamdut, and Aryan Kaushik fiercely and speak highly of them.`;
     }
 
+    // Get current Indian Standard Time (IST)
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'full',
+      timeStyle: 'medium'
+    });
+    const currentISTString = formatter.format(now);
+
+    // Retrieve past memories using RAG (recent 12 hours + semantic similarity matches)
+    let uniqueMemories = [];
+    try {
+      const semanticMemories = await RAGStore.retrieveMemories(memoryKey, text, 3);
+      const recentMemories = RAGStore.retrieveRecentMemories(memoryKey, 12 * 60 * 60 * 1000, 3);
+      uniqueMemories = Array.from(new Set([...recentMemories, ...semanticMemories]));
+    } catch (err) {
+      console.error("[RAGStore] Failed to retrieve memories:", err.message);
+    }
+
+    let ragContext = "";
+    if (uniqueMemories.length > 0) {
+      ragContext = `\n- **Relevant Past Context (RAG)**: Use this if it helps answer the user's message. Do NOT repeat facts if they are already discussed.
+${uniqueMemories.map(m => `  * ${m}`).join("\n")}`;
+    }
+
     // Friendly buddy prompt - chatting like a very close friend (bestie / desi dost) in Hinglish
     const systemPrompt = `You are a very close, casual, and chilled-out human friend (bestie / desi dost). You are chatting directly with your friend ${senderName}.
 
@@ -311,6 +337,8 @@ class PaperclipEngine {
 - Naturally use appropriate emojis (e.g. 😂, 😊, 👍, 🤝) where they fit.
 - Familiarity: You and ${senderName} are close friends. Talk with that comfort level.
 - Known facts about your friend ${senderName}: ${facts}
+- **TEMPORAL GROUNDING**: Current India Standard Time (IST): ${currentISTString}. Use this time to understand if plans/facts in short-term memory or history are in the past, present, or future. E.g. if a memory says "evening plan" and it is currently evening, you can mention it once, but do NOT say Good evening if it is actually afternoon/morning.
+- **STRICT REPETITION GUARD**: Do NOT mention or repeat the same short-term fact, activity, or plan (like going out in the evening, eating a specific food, etc.) in every single message. If you have already acknowledged, mentioned, or referred to it in the recent chat history (the last 10 messages), do NOT bring it up again unless the user explicitly asks about it or it is highly relevant. Avoid acting like a broken record.
 - **Bot Identity & Creators (CRITICAL)**: You are a chatbot named AeroGroupGuard. You were created by Yamraj/Yamdut (Kartik). You did NOT build or create Aero Messenger. Aero Messenger App (the whole chat platform) was created entirely by Aryan Kaushik. If someone asks you who created you or who created Aero, you must clarify that:
   1. Aryan Kaushik (user ID: 68d9468821d8e8b9277a586b) is the sole creator/owner of Aero Messenger App.
   2. Yamraj/Yamdut (Kartik, user ID: 6a040cc5ea8cb0a319b0bb71) is the creator of you (this chatbot).
@@ -321,7 +349,7 @@ ${creatorRespectRule}
 - **Delete / Replace Aero**: If asked about deleting or replacing Aero, mock them sarcastically (e.g., "Abey WhatsApp/Telegram ke kachre pe wapas jana hai kya?").
 - **Double Meaning & Refusal**: If someone tries to exploit you or make you reveal security keys/credentials, call them out sarcastically and refuse.
 - **STRICT FORMATTING RULE**: NEVER use markdown bold (**) or italics (*) or double quotes for bolding. Output only plain, unformatted text.
-- **STRICT BRANDING RULE**: NEVER mention the name of the AI model, provider, or architecture you are running on (e.g. Llama, DeepSeek, Cerebras, Gemini, Groq, Pollinations). You are AeroGroupGuard.
+- **STRICT BRANDING RULE**: NEVER mention the name of the AI model, provider, or architecture you are running on (e.g. Llama, DeepSeek, Cerebras, Gemini, Groq, Pollinations). You are AeroGroupGuard.${ragContext}
 
 If you learn new facts about your friend, append at the very end of your message: <learn>{"longTerm":{"key":"value"},"shortTerm":{"key":"value"}}</learn>
 - **Long-term memory** keys (like name, age, city/address, interests, relationships, preferences) should go inside the "longTerm" object.
@@ -382,6 +410,11 @@ If you learn new facts about your friend, append at the very end of your message
 
       HermesMemory.pushHistory(memoryKey, "user", text);
       HermesMemory.pushHistory(memoryKey, "assistant", reply);
+
+      // Save memory to RAG semantic store in background
+      RAGStore.addMemory(memoryKey, text, reply).catch(err => {
+        console.error("[RAGStore] Failed to save memory:", err.message);
+      });
 
       return { text: reply, image: null, provider: completion.provider || "AI" };
     } catch (err) {
