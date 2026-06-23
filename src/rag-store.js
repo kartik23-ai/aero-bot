@@ -80,8 +80,8 @@ class RAGStore {
       timestamp: Date.now()
     });
 
-    // Keep up to 200 memories per user to manage storage size
-    if (this.db[memoryKey].length > 200) {
+    // Keep up to 150 memories per user to manage storage size
+    if (this.db[memoryKey].length > 150) {
       this.db[memoryKey].shift();
     }
     this.save();
