@@ -84,9 +84,6 @@ class PaperclipEngine {
 
 
 
-    // 5. Translation
-    const translateKw = ["translate", "anuvad", "translation", "hindi me", "english me", "hindi mein", "english mein", "ko translate", "translation of"];
-    for (const kw of translateKw) if (n.includes(kw)) return "TRANSLATE_AGENT";
 
     // 6. Stocks/Crypto
     const stockKw = ["stock", "share price", "bitcoin", "btc", "ethereum", "eth", "crypto", "nifty", "sensex", "doge", "solana", "market price", "stock price", "stocks"];
@@ -242,7 +239,6 @@ class PaperclipEngine {
       case "DESIGN_AGENT":     result = await this._runDesignAgent(text, senderName, generateImageBase64Fn, dockModel); break;
       case "PDF_AGENT":        result = await this._runPdfAgent(text, dockModel); break;
       // --- Utility Agents (external APIs, instant) ---
-      case "TRANSLATE_AGENT":  result = await this._runTranslateAgent(text); break;
       case "STOCK_AGENT":      result = await this._runStockAgent(text); break;
       case "DICTIONARY_AGENT": result = await this._runDictionaryAgent(text); break;
       case "MOVIE_AGENT":      result = await this._runMovieAgent(text); break;
@@ -623,20 +619,6 @@ Output only the content of the document, do not include instructions or system t
 
 
 
-  // --- Translation ---
-  async _runTranslateAgent(text) {
-    let targetLang = "hi";
-    const langMap = { "hindi": "hi", "english": "en", "urdu": "ur", "spanish": "es", "french": "fr", "german": "de",
-      "chinese": "zh", "japanese": "ja", "korean": "ko", "arabic": "ar", "bengali": "bn", "tamil": "ta",
-      "telugu": "te", "marathi": "mr", "gujarati": "gu", "punjabi": "pa", "kannada": "kn", "malayalam": "ml" };
-    for (const [name, code] of Object.entries(langMap)) {
-      if (text.toLowerCase().includes(name)) { targetLang = code; break; }
-    }
-    const cleanText = text.replace(/translate|anuvad|translation|\bto\b|\bse\b|\bme\b|\bmein\b|\bko\b|\bhindi\b|\benglish\b|\burdu\b|\bspanish\b|\bfrench\b|\bgerman\b|\bchinese\b|\bjapanese\b|\bkorean\b|\barabic\b|\bbengali\b|\btamil\b|\btelugu\b|\bmarathi\b|\bgujarati\b|\bpunjabi\b|\bkannada\b|\bmalayalam\b/gi, "").trim();
-    const result = await utils.translate(cleanText || text, targetLang);
-    if (result.error) return { text: this._friendlyError(result.error, "Translation API"), image: null, provider: "Google Translate" };
-    return { text: result.text, image: null, provider: "Google Translate" };
-  }
 
   // --- Stocks/Crypto ---
   async _runStockAgent(text) {

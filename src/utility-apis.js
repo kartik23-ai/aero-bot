@@ -321,49 +321,6 @@ async function getStockPrice(symbol) {
   }
 }
 
-// =============================================
-// 12. TRANSLATION — LibreTranslate (FREE)
-// =============================================
-async function translate(text, targetLang) {
-  try {
-    // Use public LibreTranslate instance
-    const instances = [
-      "https://libretranslate.com",
-      "https://translate.terraprint.co"
-    ];
-    let lastError = null;
-    for (const base of instances) {
-      try {
-        const res = await httpPost(`${base}/translate`, {
-          q: text,
-          source: "auto",
-          target: targetLang || "hi",
-          format: "text"
-        }, {}, 8000);
-        if (res.data?.translatedText) {
-          return {
-            text: `🌐 **Translation** (→ ${targetLang || "hi"})\n\n📝 Original: ${text}\n✅ Translated: **${res.data.translatedText}**`
-          };
-        }
-      } catch (e) {
-        lastError = e;
-      }
-    }
-
-    // Fallback: Use Google Translate free (unofficial)
-    const gtUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang || "hi"}&dt=t&q=${encodeURIComponent(text)}`;
-    const gtRes = await httpGet(gtUrl);
-    if (Array.isArray(gtRes.data) && gtRes.data[0]?.[0]?.[0]) {
-      const translated = gtRes.data[0].map(s => s[0]).join("");
-      return {
-        text: `🌐 **Translation** (→ ${targetLang || "hi"})\n\n📝 Original: ${text}\n✅ Translated: **${translated}**`
-      };
-    }
-    return { error: "Translation failed. " + (lastError?.message || "") };
-  } catch (err) {
-    return { error: "Translation failed: " + err.message };
-  }
-}
 
 // =============================================
 // 13. BOOKS — Open Library (FREE, NO KEY)
@@ -423,6 +380,6 @@ async function getSportsScore(sport, query) {
 module.exports = {
   getNews, getJoke, getQuote, getTrivia,
   getDictionary, getCountryInfo,
-  getMovie, getRecipe, getStockPrice, translate,
+  getMovie, getRecipe, getStockPrice,
   getBook, getSportsScore
 };
