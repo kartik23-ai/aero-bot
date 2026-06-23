@@ -1044,36 +1044,46 @@ class ProviderManager {
   // Free, no key, reliable, high quality
   // =============================================
   async generateImage(prompt) {
-    // 1. PRIMARY: HuggingFace Space Gradio Client (FLUX.1-dev) - Ultra High Quality
+    // 1. PRIMARY: HuggingFace Space Gradio Client Cascade
     try {
-      console.log("[Providers] Connecting to HuggingFace Gradio Space for FLUX.1-dev...");
       const { Client } = require("@gradio/client");
       const axios = require("axios");
       const hfToken = process.env.HF_TOKEN || ("hf_" + "uZePaavwLxlVMhv" + "MTiVxhJlDXRHHnHsgxY");
-      const client = await Client.connect("black-forest-labs/FLUX.1-dev", {
-        hf_token: `Bearer ${hfToken}`
-      });
-      console.log("[Providers] Gradio connected! Generating image (FLUX.1-dev)...");
-      const result = await client.predict("/infer", {
-        prompt: prompt,
-        seed: 0,
-        randomize_seed: true,
-        width: 1024,
-        height: 1024,
-        num_inference_steps: 28
-      });
-      if (result.data && result.data[0] && result.data[0].url) {
-        console.log("[Providers] FLUX.1-dev Gradio image URL obtained, downloading...");
-        const imgRes = await axios.get(result.data[0].url, { responseType: "arraybuffer", timeout: 25000 });
-        if (imgRes.status === 200 && imgRes.data.length > 500) {
-          const contentType = imgRes.headers["content-type"] || "image/png";
-          const base64 = Buffer.from(imgRes.data).toString("base64");
-          console.log("[Providers] FLUX.1-dev image generated successfully:", imgRes.data.length, "bytes");
-          return `data:${contentType};base64,${base64}`;
+      
+      const spaces = [
+        { name: "black-forest-labs/FLUX.1-dev", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 28 } },
+        { name: "multimodalart/FLUX.1-schnell", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 4 } },
+        { name: "stabilityai/stable-diffusion-3.5-large", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 28 } }
+      ];
+
+      for (const space of spaces) {
+        try {
+          console.log(`[Providers] Connecting to HuggingFace Gradio Space: ${space.name}...`);
+          const client = await Client.connect(space.name, {
+            hf_token: `Bearer ${hfToken}`
+          });
+          console.log(`[Providers] Gradio connected! Generating image via ${space.name}...`);
+          const result = await client.predict(space.api, space.params);
+          if (result.data && result.data[0]) {
+            const imgInfo = result.data[0];
+            const imgUrl = typeof imgInfo === "string" ? imgInfo : imgInfo.url;
+            if (imgUrl) {
+              console.log(`[Providers] Image URL obtained from ${space.name}, downloading...`);
+              const imgRes = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 25000 });
+              if (imgRes.status === 200 && imgRes.data.length > 500) {
+                const contentType = imgRes.headers["content-type"] || "image/png";
+                const base64 = Buffer.from(imgRes.data).toString("base64");
+                console.log(`[Providers] Image generated successfully via ${space.name}:`, imgRes.data.length, "bytes");
+                return `data:${contentType};base64,${base64}`;
+              }
+            }
+          }
+        } catch (spaceErr) {
+          console.error(`[Providers] Gradio Space ${space.name} failed:`, spaceErr.message);
         }
       }
     } catch (err) {
-      console.error("[Providers] FLUX.1-dev Gradio failed:", err.message);
+      console.error("[Providers] Gradio cascade setup failed:", err.message);
     }
 
     // 2. SECONDARY: HuggingFace Serverless Router (FLUX.1-schnell) - Fast & High Quality
