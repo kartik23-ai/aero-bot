@@ -502,6 +502,35 @@ async function generateMemeBase64(template, topText, bottomText) {
   }
 }
 
+async function fetchImageBase64(imageUrl) {
+  try {
+    const res = await axios.get(imageUrl, {
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    const contentType = res.headers["content-type"] || "image/png";
+    const base64 = Buffer.from(res.data).toString("base64");
+    return `data:${contentType};base64,${base64}`;
+  } catch (err) {
+    console.error("[ImageFetch] Failed to fetch image and convert to Base64:", err.message);
+    throw err;
+  }
+}
+
+async function fetchRedditMeme(subreddit = "", depth = 0) {
+  if (depth > 5) {
+    throw new Error("Could not find any safe non-NSFW memes after 5 retries.");
+  }
+  const url = subreddit ? `https://meme-api.com/gimme/${subreddit}` : "https://meme-api.com/gimme";
+  const res = await axios.get(url, { timeout: 10000 });
+  const data = res.data;
+  if (data.nsfw || data.spoiler) {
+    console.warn(`[MemeGen] Fetched meme was NSFW/Spoiler, retrying (depth: ${depth + 1})...`);
+    return fetchRedditMeme(subreddit, depth + 1);
+  }
+  return data;
+}
+
 // Session Persistence Bypasses
 function saveSession(sessionData) {
   sessionCache = sessionData;
@@ -4178,7 +4207,58 @@ Keep it concise, highly readable, and fun!`;
 
 async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings) {
   const topic = argsText.trim();
+  const cleanTopic = topic.replace(/^@/, "").trim().toLowerCase();
   try {
+    // 1. If topic is empty, fetch a completely random meme from Reddit
+    if (!topic) {
+      try {
+        console.log("[MemeCommand] Topic is empty, fetching random hot meme from Reddit...");
+        const memeData = await fetchRedditMeme("");
+        const base64Uri = await fetchImageBase64(memeData.url);
+        await aero.sendMessage(dockId, "", base64Uri);
+        return;
+      } catch (err) {
+        console.error("[MemeCommand] Failed to fetch random Reddit meme, falling back to custom AI meme:", err.message);
+      }
+    }
+
+    // 2. If topic maps to or matches a known subreddit (or they typed "reddit"), fetch from Reddit
+    const SUBREDDIT_MAP = {
+      gaming: "gamingmemes",
+      game: "gamingmemes",
+      gamer: "gamingmemes",
+      coding: "programmerhumor",
+      programming: "programmerhumor",
+      programmer: "programmerhumor",
+      code: "programmerhumor",
+      developer: "programmerhumor",
+      coder: "programmerhumor",
+      anime: "animemes",
+      wholesome: "wholesomememes",
+      history: "historymemes",
+      science: "sciencememes",
+      physics: "physicsmemes",
+      math: "mathmemes",
+      movie: "moviememes",
+      movies: "moviememes",
+      cricket: "cricketshitpost",
+      school: "schoolmemes",
+      reddit: "dankmemes"
+    };
+
+    const targetSubreddit = SUBREDDIT_MAP[cleanTopic] || (cleanTopic.length > 2 && cleanTopic.length < 30 ? cleanTopic : null);
+    if (!topic.startsWith("@") && targetSubreddit) {
+      try {
+        console.log(`[MemeCommand] Attempting to fetch Reddit meme from subreddit: r/${targetSubreddit}...`);
+        const memeData = await fetchRedditMeme(targetSubreddit);
+        const base64Uri = await fetchImageBase64(memeData.url);
+        await aero.sendMessage(dockId, "", base64Uri);
+        return;
+      } catch (err) {
+        console.log(`[MemeCommand] Subreddit r/${targetSubreddit} fetch failed, falling back to custom AI meme...`);
+      }
+    }
+
     let userContext = "";
     if (topic) {
       userContext += `User Topic: ${topic}\n`;
