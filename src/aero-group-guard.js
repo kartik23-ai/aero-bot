@@ -48,7 +48,8 @@ const ADMIN_COMMANDS = new Set([
   "recap",
   "rename",
   "announce",
-  "setfaq"
+  "setfaq",
+  "digest"
 ]);
 
 const USER_COMMANDS = new Set([
@@ -62,7 +63,9 @@ const USER_COMMANDS = new Set([
   "status",
   "commands",
   "summaryrequest",
-  "draw"
+  "draw",
+  "meme",
+  "remind"
 ]);
 
 class AeroGroupGuard {

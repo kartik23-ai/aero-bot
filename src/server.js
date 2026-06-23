@@ -12,6 +12,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const axios = require("axios");
 
 // Load .env file manually if it exists in the root directory
 const envPath = path.join(__dirname, "..", ".env");
@@ -350,7 +351,8 @@ function getGroupSettings(db, dockId) {
       botDisabled: false,
       aiSlowmodeSec: 0,
       messageCount: 0,
-      aiRequestCount: 0
+      aiRequestCount: 0,
+      digestEnabled: false
     };
   }
   const g = db.groups[dockId];
@@ -368,6 +370,7 @@ function getGroupSettings(db, dockId) {
   if (g.aiSlowmodeSec === undefined) g.aiSlowmodeSec = 0;
   if (g.messageCount === undefined) g.messageCount = 0;
   if (g.aiRequestCount === undefined) g.aiRequestCount = 0;
+  if (g.digestEnabled === undefined) g.digestEnabled = false;
   return g;
 }
 
@@ -473,6 +476,26 @@ async function generateImageBase64(prompt) {
   }
 
   throw new Error("All image generation endpoints failed.");
+}
+
+async function generateMemeBase64(template, topText, bottomText) {
+  try {
+    const cleanTop = encodeURIComponent(topText.trim().replace(/\s+/g, '_').replace(/\?/g, '~q').replace(/%/g, '~p'));
+    const cleanBottom = encodeURIComponent(bottomText.trim().replace(/\s+/g, '_').replace(/\?/g, '~q').replace(/%/g, '~p'));
+    const memeUrl = `https://api.memegen.link/images/${template}/${cleanTop}/${cleanBottom}.png`;
+    
+    console.log(`[MemeGen] Fetching meme from: ${memeUrl}`);
+    const res = await axios.get(memeUrl, {
+      responseType: "arraybuffer",
+      timeout: 20000
+    });
+    const contentType = res.headers["content-type"] || "image/png";
+    const base64 = Buffer.from(res.data).toString("base64");
+    return `data:${contentType};base64,${base64}`;
+  } catch (err) {
+    console.error("[MemeGen] Failed to generate meme image:", err.message);
+    throw err;
+  }
 }
 
 // Session Persistence Bypasses
@@ -2066,6 +2089,16 @@ I will automatically log it as a task and keep you updated! 😊`;
         })();
         reply = null;
       }
+    } else if (cmdName === "meme") {
+      reply = null;
+      handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings);
+    } else if (cmdName === "digest") {
+      reply = handleDigestCommand(argsText, groupSettings, canEdit);
+    } else if (cmdName === "remind") {
+      reply = null;
+      handleRemindCommand(dockId, senderId, senderName, argsText, cmdName).then(res => {
+        if (res) aero.sendMessage(dockId, res);
+      });
     } else if (cmdName === "status") {
       reply = `Group Status: Rules: ${groupSettings.rules.substring(0, 30)}..., Lock: ${groupSettings.locked ? "locked" : "unlocked"}, Slowmode: ${groupSettings.slowmodeSeconds > 0 ? groupSettings.slowmodeSeconds + "s" : "disabled"}, Abusive filter: ${groupSettings.abusiveFilter ? "enabled" : "disabled"}, Admins allowed to edit: ${groupSettings.allowAdminsToEdit ? "yes" : "no"}, Warnings logged: ${Object.keys(groupSettings.warnings).length}`;
     } else if (cmdName === "report") {
@@ -2516,15 +2549,20 @@ if (require.main === module) {
 
   server.listen(config.port, "0.0.0.0", () => {
     logger.info("server_started", { port: config.port });
-    if (process.env.LOCAL_ONLY === "true") {
-      console.log("[LocalMode] LOCAL_ONLY=true — Aero auto-connect SKIPPED. Running in local sandbox mode only.");
-    } else {
-      initDbPromise.then(() => {
+    initDbPromise.then(() => {
+      // Start background schedulers
+      loadReminders();
+      setInterval(checkAndSendReminders, 20000);
+      setInterval(sendDailyDigests, 60000);
+
+      if (process.env.LOCAL_ONLY === "true") {
+        console.log("[LocalMode] LOCAL_ONLY=true — Aero auto-connect SKIPPED. Running in local sandbox mode only.");
+      } else {
         autoConnect().catch(err => {
           console.error("[AutoConnect] Error on startup:", err.message);
         });
-      });
-    }
+      }
+    });
   });
 }
 
@@ -3139,6 +3177,16 @@ I will automatically log it as a task and keep you updated! 😊`;
             })();
             reply = null;
           }
+        } else if (cmdName === "meme") {
+          reply = null;
+          handleMemeCommand(webhookDockId, senderId, senderName, argsText, groupSettings);
+        } else if (cmdName === "digest") {
+          reply = handleDigestCommand(argsText, groupSettings, isSenderAdmin);
+        } else if (cmdName === "remind") {
+          reply = null;
+          handleRemindCommand(webhookDockId, senderId, senderName, argsText, cmdName).then(res => {
+            if (res) aero.sendMessage(webhookDockId, res);
+          });
         } else if (cmdName === "voice") {
           const voiceText = argsText.trim();
           if (!voiceText) {
@@ -3624,7 +3672,23 @@ function readJson(req) {
   });
 }
 
-module.exports = { server, bot, ai, aero };
+module.exports = { 
+  server, 
+  bot, 
+  ai, 
+  aero,
+  loadGroupDb,
+  saveGroupDb,
+  getGroupSettings,
+  handleMemeCommand,
+  handleDigestCommand,
+  handleRemindCommand,
+  loadReminders,
+  saveReminders,
+  checkAndSendReminders,
+  sendDailyDigests,
+  loadChatsCacheIfNeeded
+};
 
 function normalizeGroupTargets(groupIds) {
   const activeGroups = getActiveGroups();
@@ -3951,6 +4015,345 @@ function queueAssistantReply(groupId, text, reason) {
   if (outboundMessages.length > 100) outboundMessages.shift();
   audit("assistant_reply_queued", { id: "system", role: "SYSTEM" }, [action.groupId], { reason, messageLength: text.length });
   return action;
+}
+
+let remindersCache = null;
+function loadReminders() {
+  if (remindersCache) return remindersCache;
+  const filePath = path.join(__dirname, "..", "db", "reminders.json");
+  if (fs.existsSync(filePath)) {
+    try {
+      remindersCache = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    } catch (e) {
+      remindersCache = [];
+    }
+  } else {
+    remindersCache = [];
+  }
+  return remindersCache;
+}
+
+function saveReminders() {
+  if (!remindersCache) return;
+  const filePath = path.join(__dirname, "..", "db", "reminders.json");
+  const dbDir = path.dirname(filePath);
+  try {
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    fs.writeFileSync(filePath, JSON.stringify(remindersCache, null, 2), "utf-8");
+  } catch (e) {
+    console.error("[Reminders Storage Error]:", e.message);
+  }
+}
+
+async function checkAndSendReminders() {
+  try {
+    loadReminders();
+    if (!remindersCache || remindersCache.length === 0) return;
+    
+    const now = Date.now();
+    const dueReminders = remindersCache.filter(r => now >= r.triggerTimeMs);
+    
+    if (dueReminders.length === 0) return;
+    
+    console.log(`[RemindersCheck] Found ${dueReminders.length} due reminders.`);
+    
+    for (const reminder of dueReminders) {
+      try {
+        let msgText = "";
+        if (reminder.target === "me") {
+          msgText = `🔔 **Reminder Alert** 🔔\n\nHey @${reminder.userName}, here is your reminder: *${reminder.task}*`;
+        } else {
+          msgText = `🔔 **Group Reminder Alert** 🔔\n\nHey guys, here is the reminder: *${reminder.task}*\n*(Set by @${reminder.userName})*`;
+        }
+        
+        await aero.sendMessage(reminder.dockId, msgText);
+        console.log(`[RemindersCheck] Sent reminder id ${reminder.id} to dock ${reminder.dockId}`);
+      } catch (err) {
+        console.error(`[RemindersCheck] Failed to send reminder id ${reminder.id}:`, err.message);
+      }
+    }
+    
+    // Filter out processed reminders
+    remindersCache = remindersCache.filter(r => now < r.triggerTimeMs);
+    saveReminders();
+  } catch (err) {
+    console.error("[RemindersCheck] Error in checkAndSendReminders:", err.message);
+  }
+}
+
+let lastDigestDate = "";
+async function sendDailyDigests() {
+  try {
+    const nowIST = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const dateObj = new Date(nowIST);
+    const hours = dateObj.getHours();
+    const minutes = dateObj.getMinutes();
+    
+    if (hours === 23 && minutes === 59) {
+      const currentDateStr = `${dateObj.getFullYear()}-${dateObj.getMonth() + 1}-${dateObj.getDate()}`;
+      if (lastDigestDate === currentDateStr) {
+        return;
+      }
+      lastDigestDate = currentDateStr;
+      
+      console.log(`[DailyDigest] Triggering daily group digests for ${currentDateStr}...`);
+      const db = loadGroupDb();
+      loadChatsCacheIfNeeded();
+      
+      const todayStart = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate()).getTime();
+      const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+      
+      for (const [dockId, settings] of Object.entries(db.groups || {})) {
+        if (!settings.digestEnabled) continue;
+        
+        const dayMsgs = (chatsCache && chatsCache[dockId] || []).filter(m => {
+          const t = new Date(m.timestamp).getTime();
+          return t >= todayStart && t < todayEnd;
+        });
+        
+        if (dayMsgs.length < 5) {
+          console.log(`[DailyDigest] Skipping digest for group ${dockId} as it has only ${dayMsgs.length} messages today.`);
+          continue;
+        }
+        
+        console.log(`[DailyDigest] Generating digest for group ${dockId} (${dayMsgs.length} messages)...`);
+        
+        const messageCounts = {};
+        for (const m of dayMsgs) {
+          const sName = m.senderName || "Unknown User";
+          messageCounts[sName] = (messageCounts[sName] || 0) + 1;
+        }
+        let spammer = "None";
+        let maxMsgs = 0;
+        for (const [name, count] of Object.entries(messageCounts)) {
+          if (count > maxMsgs) {
+            maxMsgs = count;
+            spammer = name;
+          }
+        }
+        
+        const textLogs = dayMsgs.map(m => `[${m.senderName}]: ${m.text}`).join("\n");
+        const prompt = `You are a gossip columnist editor for a group chat newspaper. Analyze the group's chat logs for today and compile a funny, engaging "Daily Gossip Digest" (Gossip Bulletin) in Hindi/Hinglish.
+        
+Today's Spammer of the Day is: ${spammer} with ${maxMsgs} messages.
+
+Chat Logs:
+${textLogs}
+
+Please format the output exactly as a mini gossip newspaper/bulletin with the following sections (use emojis and bold titles, and write in a very dramatic, entertaining, and humorous tone):
+1. 📰 **AERO DAILY GOSSIP BULLETIN** 📰
+2. 👑 **Spammer of the Day**: Tell who spoke the most and tease them.
+3. 🔥 **Hot Topic of the Day**: What was the most debated or discussed topic today? Summarize the gossip.
+4. 🎭 **Top Roast of the Day**: Find a funny burn, insult, or roast in the logs. If none exists, make up a lighthearted roast targeting someone based on today's chats.
+
+Keep it concise, highly readable, and fun!`;
+
+        try {
+          const digestResponse = await ai.runChatCompletion({
+            messages: [
+              { role: "system", content: "You are a gossip newspaper columnist." },
+              { role: "user", content: prompt }
+            ]
+          });
+          const digestText = digestResponse.choices[0]?.message?.content || "";
+          
+          if (digestText.trim()) {
+            await aero.sendMessage(dockId, digestText);
+            console.log(`[DailyDigest] Successfully sent daily digest to group ${dockId}`);
+          }
+        } catch (err) {
+          console.error(`[DailyDigest] Failed to generate digest for group ${dockId}:`, err.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[DailyDigest] Error in daily digest scheduler:", err.message);
+  }
+}
+
+
+async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings) {
+  const topic = argsText.trim();
+  try {
+    let userContext = "";
+    if (topic) {
+      userContext += `User Topic: ${topic}\n`;
+      const cleanTopicName = topic.replace(/^@/, "").trim().toLowerCase();
+      const matchedMember = Object.values(groupSettings.members || {}).find(m => (m.username || "").toLowerCase() === cleanTopicName);
+      if (matchedMember) {
+        const { HermesMemory } = require("./hermes-memory");
+        const memFacts = HermesMemory.compileFactsString(matchedMember.id);
+        userContext += `Target User Info (@${matchedMember.username}):\n${memFacts}\n`;
+      }
+    }
+    
+    loadChatsCacheIfNeeded();
+    const recentMsgs = (chatsCache && chatsCache[dockId]) ? chatsCache[dockId].slice(-20) : [];
+    if (recentMsgs.length > 0) {
+      userContext += `Recent Group Chat History:\n` + recentMsgs.map(m => `[${m.senderName}]: ${m.text}`).join("\n") + "\n";
+    }
+
+    const systemPrompt = `You are a savage, funny meme generator for a group chat. 
+Your goal is to select the perfect meme template and write highly engaging, funny, and roasted captions (in a mix of English and Hinglish/Hindi) based on the user's topic, recent chat history, or member facts.
+
+Available templates:
+- "drake": Drake Hotline Bling (comparing two things, top panel is negative/no, bottom is positive/yes)
+- "distracted": Distracted boyfriend (someone looking at something else, topText = new thing, bottomText = current thing/person)
+- "fine": This is Fine dog in fire (ignoring a disaster)
+- "doge": Doge dog (much wow, very something)
+- "spongebob": Mocking Spongebob (repeating something mockingly)
+- "two-buttons": Two buttons (difficult choice between two options)
+- "disastergirl": Girl smiling in front of burning house (causing or enjoying chaos)
+- "success": Success kid (small victory)
+- "brain": Expanding brain (increasingly ridiculous/complex ideas)
+- "grumpycat": Grumpy cat (dislike/hate something)
+- "wonka": Condescending Willy Wonka (sarcastic questioning)
+- "rollsafe": Smart guy tapping head (logical but stupid advice)
+- "buzz": Buzz Lightyear pointing (something everywhere)
+
+You MUST respond in JSON format ONLY:
+{
+  "template": "<one of the templates listed above>",
+  "topText": "<Top caption text, short and punchy>",
+  "bottomText": "<Bottom caption text, short and punchy>"
+}
+Ensure the text is extremely funny, relevant to the topic/context, and uses Indian group chat context/Hinglish humor where appropriate. Avoid boring or generic captions. Keep captions short so they fit on the image. Do not include markdown code block formatting in your response, return raw JSON string.`;
+
+    const response = await ai.runChatCompletion({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Generate a meme for context:\n${userContext}` }
+      ],
+      temperature: 0.8
+    });
+
+    const resText = (response.choices[0]?.message?.content || "").trim();
+    const cleanedJsonStr = resText.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    const resJson = JSON.parse(cleanedJsonStr);
+    
+    if (!resJson.template || !resJson.topText || !resJson.bottomText) {
+      throw new Error("Invalid response format from AI");
+    }
+
+    const base64Uri = await generateMemeBase64(resJson.template, resJson.topText, resJson.bottomText);
+    const caption = `🎭 **Custom Meme Maker & Roaster**\nTemplate: *${resJson.template}*\nTop: *${resJson.topText}*\nBottom: *${resJson.bottomText}*`;
+    await aero.sendMessage(dockId, caption, base64Uri);
+  } catch (err) {
+    console.error("[Meme Command Error]:", err.message);
+    await aero.sendMessage(dockId, `❌ Meme generate karne me error aaya: ${err.message}`);
+  }
+}
+
+function handleDigestCommand(argsText, groupSettings, canEdit) {
+  if (!canEdit) {
+    return "Permission denied. Only group admins can toggle the daily digest.";
+  }
+  const arg = argsText.trim().toLowerCase();
+  if (arg === "on" || arg === "enable") {
+    groupSettings.digestEnabled = true;
+    const db = loadGroupDb();
+    saveGroupDb(db);
+    return "✅ Daily Gossip Digest has been enabled! Har raat 11:59 PM par pure din ki chat analyze karke mini newspaper bhejunga.";
+  } else if (arg === "off" || arg === "disable") {
+    groupSettings.digestEnabled = false;
+    const db = loadGroupDb();
+    saveGroupDb(db);
+    return "❌ Daily Gossip Digest has been disabled.";
+  } else {
+    return `Usage: /digest on or /digest off\nCurrent status: ${groupSettings.digestEnabled ? "enabled" : "disabled"}`;
+  }
+}
+
+async function handleRemindCommand(dockId, senderId, senderName, argsText, parsedCmdName) {
+  const topic = argsText.trim();
+  if (!topic) {
+    return "Please specify a reminder schedule and task. E.g. `/remind me in 10 minutes to take break` or `/remind group tomorrow at 10 AM about meeting`";
+  }
+  try {
+    const nowIST = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const currentUnix = Date.now();
+    const systemPrompt = `You are a date and time extraction assistant. Your job is to parse a reminder request from a user in a group chat and return a JSON object specifying when the reminder should trigger and what it is about.
+   
+Current Date and Time (IST): ${nowIST}
+Current Time Unix Timestamp (ms): ${currentUnix}
+
+The user might specify a relative time (e.g., "in 10 minutes", "after 2 hours") or an absolute time (e.g., "tomorrow at 10 AM", "at 8:00 PM", "aaj shaam 6 baje").
+
+You MUST respond in JSON format ONLY:
+{
+  "target": "me" | "group",
+  "task": "<the task description, e.g., 'go out with friends'>",
+  "triggerTimeMs": <target Unix timestamp in milliseconds when the reminder should fire>
+}
+
+Rules:
+- "target": Must be "me" if they say "/remind me..." or "group" if they say "/remind group...". Default to "me" if not specified.
+- "task": The activity to remind about, cleaned up and in clear language.
+- "triggerTimeMs": Must be a future timestamp. If the user specifies a time that has already passed today (e.g., it is 9 PM and they say "at 8 PM"), assume they mean the next occurrence (e.g., 8 PM tomorrow).
+
+Do not include markdown code block formatting in your response. Return raw JSON string.`;
+
+    const response = await ai.runChatCompletion({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Request: ${parsedCmdName} ${argsText}` }
+      ],
+      temperature: 0.0
+    });
+
+    const resText = (response.choices[0]?.message?.content || "").trim();
+    const cleanedJsonStr = resText.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    const resJson = JSON.parse(cleanedJsonStr);
+
+    if (!resJson.triggerTimeMs || !resJson.task) {
+      throw new Error("Could not parse schedule or task description.");
+    }
+
+    if (resJson.triggerTimeMs <= Date.now()) {
+      throw new Error("Trigger time must be in the future.");
+    }
+
+    const reminder = {
+      id: "reminder-" + Math.random().toString(36).substring(2, 10),
+      dockId,
+      userId: senderId,
+      userName: senderName,
+      target: resJson.target || "me",
+      task: resJson.task,
+      triggerTimeMs: resJson.triggerTimeMs,
+      createdAt: new Date().toISOString()
+    };
+
+    loadReminders();
+    remindersCache.push(reminder);
+    saveReminders();
+
+    const timeDiffMs = resJson.triggerTimeMs - Date.now();
+    const timeDiffMin = Math.round(timeDiffMs / 60000);
+    const targetTimeStr = new Date(resJson.triggerTimeMs).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    
+    return `✅ Reminder set successfully!\nTarget: ${reminder.target === "me" ? `@${senderName}` : "Group"}\nTask: ${reminder.task}\nTime: ${targetTimeStr} (in ~${timeDiffMin} minutes)`;
+  } catch (err) {
+    console.error("[Remind Command Error]:", err.message);
+    return `❌ Reminder set karne me error aaya: ${err.message}`;
+  }
+}
+
+function loadChatsCacheIfNeeded() {
+  if (chatsCache) return chatsCache;
+  const filePath = path.join(__dirname, "..", "db", "chats.json");
+  if (fs.existsSync(filePath)) {
+    try {
+      chatsCache = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    } catch (e) {
+      chatsCache = {};
+    }
+  } else {
+    chatsCache = {};
+  }
+  return chatsCache;
 }
 
 let chatsCache = null;
