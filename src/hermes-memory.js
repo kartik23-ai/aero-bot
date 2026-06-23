@@ -87,10 +87,48 @@ class HermesMemory {
     }, SAVE_THROTTLE_MS);
   }
 
-  // Retrieve isolated user memory
+  // Expire short-term memory keys older than 30 minutes (1800000 ms)
+  _expireShortTermMemory(mem) {
+    if (!mem.shortTerm) return false;
+    if (!mem._shortTermTimestamps) mem._shortTermTimestamps = {};
+    
+    const now = Date.now();
+    let expiredAny = false;
+    const TTL = 30 * 60 * 1000; // 30 minutes
+    
+    // Check keys in shortTerm
+    for (const key of Object.keys(mem.shortTerm)) {
+      const timestamp = mem._shortTermTimestamps[key];
+      if (!timestamp) {
+        mem._shortTermTimestamps[key] = now;
+      } else if (now - timestamp > TTL) {
+        delete mem.shortTerm[key];
+        delete mem._shortTermTimestamps[key];
+        expiredAny = true;
+      }
+    }
+    
+    // Clean up timestamps for keys that no longer exist in shortTerm
+    for (const key of Object.keys(mem._shortTermTimestamps)) {
+      if (!mem.shortTerm[key]) {
+        delete mem._shortTermTimestamps[key];
+      }
+    }
+    
+    return expiredAny;
+  }
+
+  // Retrieve isolated user memory with auto-expiration
   getUserMemory(userId) {
     if (!userId) return {};
-    return this.cache.get(userId) || {};
+    const mem = this.cache.get(userId);
+    if (!mem) return {};
+    const expired = this._expireShortTermMemory(mem);
+    if (expired) {
+      this.cache.set(userId, mem);
+      this._saveMemoryAsync();
+    }
+    return mem;
   }
 
   // Update user memory and save
@@ -101,6 +139,9 @@ class HermesMemory {
     
     if (!mem.longTerm) mem.longTerm = {};
     if (!mem.shortTerm) mem.shortTerm = {};
+    if (!mem._shortTermTimestamps) mem._shortTermTimestamps = {};
+
+    const now = Date.now();
 
     // If newFacts has longTerm or shortTerm keys, merge them
     if (newFacts.longTerm || newFacts.shortTerm) {
@@ -108,7 +149,10 @@ class HermesMemory {
         mem.longTerm = { ...mem.longTerm, ...newFacts.longTerm };
       }
       if (newFacts.shortTerm) {
-        mem.shortTerm = { ...mem.shortTerm, ...newFacts.shortTerm };
+        for (const [k, v] of Object.entries(newFacts.shortTerm)) {
+          mem.shortTerm[k] = v;
+          mem._shortTermTimestamps[k] = now;
+        }
       }
     } else {
       // If it's a flat object, auto-categorize keys
@@ -118,6 +162,7 @@ class HermesMemory {
           mem.longTerm[k] = v;
         } else {
           mem.shortTerm[k] = v;
+          mem._shortTermTimestamps[k] = now;
         }
       }
     }
@@ -131,6 +176,7 @@ class HermesMemory {
     for (const key of Object.keys(mem.shortTerm)) {
       if (mem.shortTerm[key] === null || mem.shortTerm[key] === undefined || mem.shortTerm[key] === "") {
         delete mem.shortTerm[key];
+        delete mem._shortTermTimestamps[key];
       }
     }
 
@@ -178,16 +224,16 @@ class HermesMemory {
     return result.trim();
   }
 
-  // Track conversation history (sliding window of last 3 exchanges = 6 messages)
-  // Token budget: ~6 messages × 30 tokens ≈ 180 tokens
+  // Track conversation history (sliding window of last 5 exchanges = 10 messages)
+  // Token budget: ~10 messages × 100 tokens ≈ 1000 tokens (well within AI provider limit)
   pushHistory(userId, role, content) {
     if (!userId) return;
     const mem = this.getUserMemory(userId);
     if (!mem._history) mem._history = [];
-    mem._history.push({ role, content: String(content).substring(0, 120) });
-    // Keep only last 3 exchanges (6 messages) — tight token budget
-    if (mem._history.length > 6) {
-      mem._history = mem._history.slice(-6);
+    mem._history.push({ role, content: String(content).substring(0, 500) });
+    // Keep only last 5 exchanges (10 messages) for better conversation context
+    if (mem._history.length > 10) {
+      mem._history = mem._history.slice(-10);
     }
     // Track interaction count
     if (role === "user") {

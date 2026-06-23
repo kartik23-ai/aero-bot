@@ -81,10 +81,7 @@ class PaperclipEngine {
     const hasActionTerm = actionTerms.some(t => n.includes(t));
     if (hasImageTerm && hasActionTerm) return "DESIGN_AGENT";
 
-    // 4. Weather (Check rain with boundaries to avoid train/brain conflicts)
-    const weatherKw = ["weather", "mausam", "temperature", "barish", "thand", "garmi", "weather in", "aaj ka mausam", "rain", "snow", "wind", "temp"];
-    for (const kw of weatherKw) if (n.includes(kw)) return "WEATHER_AGENT";
-    if (/\brain(y|ing|s)?\b/i.test(n)) return "WEATHER_AGENT";
+
 
     // 5. Translation
     const translateKw = ["translate", "anuvad", "translation", "hindi me", "english me", "hindi mein", "english mein", "ko translate", "translation of"];
@@ -114,14 +111,7 @@ class PaperclipEngine {
     const bookKw = ["book ", "kitab", "novel", "author of", "writer of", "pustak", "author", "writer", "books"];
     for (const kw of bookKw) if (n.includes(kw)) return "BOOK_AGENT";
 
-    // 12. Horoscope/Rashifal (Exclude gemini/cancer/leo/mesh/singh from raw list unless zodiac context is met)
-    const horoscopeKw = ["horoscope", "rashifal", "rashi", "zodiac", "aries", "taurus", "virgo",
-      "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces",
-      "vrishabh", "mithun", "kark", "kanya", "tula", "vrishchik", "dhanu", "makar", "kumbh", "meen", "horoscopes"];
-    for (const kw of horoscopeKw) if (n.includes(kw)) return "HOROSCOPE_AGENT";
-    if (/\b(gemini|cancer|leo|mesh|singh)\b/i.test(n) && /(zodiac|horoscope|rashi|future|prediction|kundli|astrology)/i.test(n)) {
-      return "HOROSCOPE_AGENT";
-    }
+
 
     // 13. Trivia/Quiz
     const triviaKw = ["trivia", "quiz", "question answer", "gk question", "sawal", "general knowledge", "quiz khel", "ek sawal", "mcq"];
@@ -251,7 +241,6 @@ class PaperclipEngine {
       case "DESIGN_AGENT":     result = await this._runDesignAgent(text, senderName, generateImageBase64Fn, dockModel); break;
       case "PDF_AGENT":        result = await this._runPdfAgent(text, dockModel); break;
       // --- Utility Agents (external APIs, instant) ---
-      case "WEATHER_AGENT":    result = await this._runWeatherAgent(text); break;
       case "TRANSLATE_AGENT":  result = await this._runTranslateAgent(text); break;
       case "STOCK_AGENT":      result = await this._runStockAgent(text); break;
       case "DICTIONARY_AGENT": result = await this._runDictionaryAgent(text); break;
@@ -259,7 +248,6 @@ class PaperclipEngine {
       case "RECIPE_AGENT":     result = await this._runRecipeAgent(text); break;
       case "COUNTRY_AGENT":    result = await this._runCountryAgent(text); break;
       case "BOOK_AGENT":       result = await this._runBookAgent(text); break;
-      case "HOROSCOPE_AGENT":  result = await this._runHoroscopeAgent(text); break;
       case "TRIVIA_AGENT":     result = await this._runTriviaAgent(text); break;
       case "QUOTE_AGENT":      result = await this._runQuoteAgent(text); break;
       case "JOKE_API_AGENT":   result = await this._runJokeApiAgent(text); break;
@@ -600,13 +588,7 @@ Output only the content of the document, do not include instructions or system t
   // UTILITY AGENTS — All wrap errors in getFriendlyErrorMessage
   // =============================================
 
-  // --- Weather ---
-  async _runWeatherAgent(text) {
-    const city = text.replace(/weather|mausam|temperature|\bin\b|\bka\b|\bki\b|\bke\b|\bof\b|\baaj\b|\btoday\b/gi, "").trim() || "Delhi";
-    const result = await utils.getWeather(city);
-    if (result.error) return { text: this._friendlyError(result.error, "Weather API"), image: null, provider: "OpenWeatherMap" };
-    return { text: result.text, image: null, provider: "OpenWeatherMap" };
-  }
+
 
   // --- Translation ---
   async _runTranslateAgent(text) {
@@ -671,22 +653,7 @@ Output only the content of the document, do not include instructions or system t
     return { text: result.text, image: null, provider: "Open Library" };
   }
 
-  // --- Horoscope ---
-  async _runHoroscopeAgent(text) {
-    const hindiToSign = {
-      "mesh": "aries", "vrishabh": "taurus", "mithun": "gemini", "kark": "cancer",
-      "singh": "leo", "kanya": "virgo", "tula": "libra", "vrishchik": "scorpio",
-      "dhanu": "sagittarius", "makar": "capricorn", "kumbh": "aquarius", "meen": "pisces"
-    };
-    let sign = "aries";
-    const n = text.toLowerCase();
-    const allSigns = ["aries","taurus","gemini","cancer","leo","virgo","libra","scorpio","sagittarius","capricorn","aquarius","pisces"];
-    for (const s of allSigns) { if (n.includes(s)) { sign = s; break; } }
-    for (const [hindi, eng] of Object.entries(hindiToSign)) { if (n.includes(hindi)) { sign = eng; break; } }
-    const result = await utils.getHoroscope(sign);
-    if (result.error) return { text: this._friendlyError(result.error, "Horoscope API"), image: null, provider: "Aztro" };
-    return { text: result.text, image: null, provider: "Aztro" };
-  }
+
 
   // --- Trivia ---
   async _runTriviaAgent(text) {

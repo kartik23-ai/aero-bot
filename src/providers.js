@@ -1441,19 +1441,7 @@ RULES:
       }
     }
 
-    // 7. Weather (OpenWeatherMap)
-    if (!process.env.OPENWEATHER_API_KEY) {
-      results.weather = { status: "Missing", message: "API key is not set" };
-    } else {
-      results.weather = await testHttpGet(
-        `https://api.openweathermap.org/data/2.5/weather?q=Delhi&appid=${process.env.OPENWEATHER_API_KEY}`,
-        {},
-        "Weather"
-      );
-      if (results.weather.status === "Active") {
-        results.weather.keyPreview = process.env.OPENWEATHER_API_KEY.substring(0, 8) + "...";
-      }
-    }
+
 
     // 8. News (NewsAPI)
     if (!process.env.NEWS_API_KEY) {

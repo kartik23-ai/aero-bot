@@ -788,6 +788,9 @@ async function processMessageAttachments(msg) {
 // Cache of processed message IDs to prevent duplicates between webhook and sockets
 const processedIssuesCache = new Set();
 
+// Cache of processed message IDs for general AI replies to prevent duplicates
+const processedMessagesCache = new Set();
+
 async function handleIssueReport(dockId, senderName, senderId, text, msgId) {
   console.log(`[IssuesTracker] Processing issue from ${senderName} in dock ${dockId}: ${text}`);
   
@@ -902,6 +905,16 @@ aero.onTaskStatusChanged(async (data) => {
 
 // Socket Message Listener
 aero.onMessage(async (msg) => {
+  const msgId = msg.id || msg._id || msg.messageId;
+  if (msgId) {
+    if (processedMessagesCache.has(msgId)) {
+      console.log(`[Deduplication] Socket message ${msgId} already processed. Skipping.`);
+      return;
+    }
+    processedMessagesCache.add(msgId);
+    setTimeout(() => processedMessagesCache.delete(msgId), 5 * 60 * 1000);
+  }
+
   const { senderId, senderName } = extractSenderInfo(msg);
   const botUserId = aero.user?._id || aero.user?.id;
   
@@ -2781,6 +2794,16 @@ async function webhook(req) {
   }
 
   if (eventType === "message" || eventType === "newMessage") {
+    const msgId = body.id || body._id || body.messageId;
+    if (msgId) {
+      if (processedMessagesCache.has(msgId)) {
+        console.log(`[Deduplication] Webhook message ${msgId} already processed. Skipping.`);
+        return json(200, { success: true });
+      }
+      processedMessagesCache.add(msgId);
+      setTimeout(() => processedMessagesCache.delete(msgId), 5 * 60 * 1000);
+    }
+
     // Setup normalized message object
     const msg = {
       dockId: webhookDockId,

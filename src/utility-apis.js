@@ -79,40 +79,7 @@ function httpPost(url, body, headers = {}, timeout = 10000) {
   });
 }
 
-// =============================================
-// 1. WEATHER — OpenWeatherMap (free, 60/min)
-// =============================================
-async function getWeather(city) {
-  const apiKey = process.env.OPENWEATHER_API_KEY;
-  if (!apiKey) return { error: "OPENWEATHER_API_KEY not set. Get free: https://openweathermap.org/api" };
 
-  let queryCity = city.trim();
-  if (queryCity.toLowerCase() === "india" || queryCity.toLowerCase() === "bharat") {
-    queryCity = "Delhi";
-  }
-
-  try {
-    const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(queryCity)}&appid=${apiKey}&units=metric&lang=hi`;
-    const res = await httpGet(url);
-    if (res.status !== 200 || !res.data.main) {
-      return { error: `City "${city}" not found.` };
-    }
-    const d = res.data;
-    return {
-      city: d.name,
-      country: d.sys?.country || "",
-      temp: d.main.temp,
-      feels_like: d.main.feels_like,
-      humidity: d.main.humidity,
-      description: d.weather?.[0]?.description || "",
-      wind: d.wind?.speed || 0,
-      icon: d.weather?.[0]?.icon || "",
-      text: `🌤️ **${d.name}, ${d.sys?.country}**\n🌡️ Temperature: **${d.main.temp}°C** (Feels like ${d.main.feels_like}°C)\n☁️ ${d.weather?.[0]?.description || ""}\n💧 Humidity: ${d.main.humidity}%\n💨 Wind: ${d.wind?.speed || 0} m/s`
-    };
-  } catch (err) {
-    return { error: "Weather fetch failed: " + err.message };
-  }
-}
 
 // =============================================
 // 2. NEWS — NewsAPI (free, 100/day)
@@ -272,36 +239,7 @@ async function getCountryInfo(country) {
 }
 
 // =============================================
-// 8. HOROSCOPE / RASHIFAL — Multiple Free APIs
-// =============================================
-async function getHoroscope(sign) {
-  const signName = sign.charAt(0).toUpperCase() + sign.slice(1).toLowerCase();
 
-  // Try Ohmanda API (reliable, free)
-  try {
-    const url = `https://ohmanda.com/api/horoscope/${sign.toLowerCase()}/`;
-    const res = await httpGet(url, {}, 5000);
-    if (res.data?.horoscope) {
-      return {
-        text: `🔮 **${signName} — Today's Horoscope**\n\n${res.data.horoscope}`
-      };
-    }
-  } catch (_) {}
-
-  // Fallback: Aztro API
-  try {
-    const url = `https://aztro.sameerkumar.website/?sign=${encodeURIComponent(sign)}&day=today`;
-    const res = await httpPost(url, "");
-    const d = res.data;
-    if (d?.description) {
-      return {
-        text: `🔮 **${signName} — Today's Horoscope**\n\n${d.description}\n\n⭐ Mood: **${d.mood || "N/A"}**\n🎨 Color: ${d.color || "N/A"}\n🔢 Lucky Number: ${d.lucky_number || "N/A"}`
-      };
-    }
-  } catch (_) {}
-
-  return { text: `🔮 ${signName} ka horoscope abhi available nahi hai. Thodi der baad try karo.` };
-}
 
 // =============================================
 // 9. MOVIES / TV — TMDB (free, unlimited)
@@ -483,8 +421,8 @@ async function getSportsScore(sport, query) {
 }
 
 module.exports = {
-  getWeather, getNews, getJoke, getQuote, getTrivia,
-  getDictionary, getCountryInfo, getHoroscope,
+  getNews, getJoke, getQuote, getTrivia,
+  getDictionary, getCountryInfo,
   getMovie, getRecipe, getStockPrice, translate,
   getBook, getSportsScore
 };

@@ -1164,7 +1164,6 @@ function renderControlCentreKeys() {
     { key: "openrouter", name: "OpenRouter API", type: "Free DeepSeek Fallback", quota: "Varies per model", signup: "openrouter.ai" },
     { key: "serper", name: "Serper.dev Google Search", type: "Web Search Grounding", quota: "2,500 queries free", signup: "serper.dev" },
     { key: "tavily", name: "Tavily Search AI", type: "Web Search Summary", quota: "1,000 queries free", signup: "tavily.com" },
-    { key: "weather", name: "OpenWeatherMap API", type: "Weather Utility", quota: "60/min, 1M/month", signup: "openweathermap.org" },
     { key: "news", name: "NewsAPI org", type: "News Utility", quota: "100 queries/day", signup: "newsapi.org" },
     { key: "movies", name: "TMDB Movies Database", type: "Movies/TV Utility", quota: "Rate limited only", signup: "themoviedb.org" },
     { key: "recipes", name: "Spoonacular API", type: "Recipes/Food Utility", quota: "150 requests/day", signup: "spoonacular.com" }
