@@ -2304,18 +2304,31 @@ I will automatically log it as a task and keep you updated! 😊`;
         (async () => {
           try {
             console.log(`[PlayCommand] User requested song: "${songName}"`);
-            await aero.sendMessage(dockId, `🎵 *Searching and downloading:* "${songName}"...`);
-             const { downloadYoutubeAudio } = require("./music-downloader");
-             const audioData = await downloadYoutubeAudio(songName);
-             await aero.sendMessage(dockId, "", null, null, null, {
-               url: audioData.uri,
-               fileName: audioData.filename,
-               type: "document",
-               mimeType: "audio/mp3"
-             });
+            await aero.sendMessage(dockId, `🎵 *Searching:* "${songName}"...`);
+            const { downloadYoutubeAudio } = require("./music-downloader");
+            const audioData = await downloadYoutubeAudio(songName);
+            if (audioData.isDirectUrl) {
+              // JioSaavn CDN URL — pass directly, no base64 (avoids 413 Payload Too Large)
+              console.log(`[PlayCommand] Sending JioSaavn CDN URL directly for: ${audioData.filename}`);
+              await aero.sendMessage(dockId, "", null, null, null, {
+                url: audioData.uri,
+                fileName: audioData.filename,
+                type: "document",
+                mimeType: "audio/mp3"
+              });
+            } else {
+              // Base64 fallback (YouTube yt-dlp download)
+              console.log(`[PlayCommand] Sending base64 audio for: ${audioData.filename}`);
+              await aero.sendMessage(dockId, "", null, null, null, {
+                url: audioData.uri,
+                fileName: audioData.filename,
+                type: "document",
+                mimeType: "audio/mp3"
+              });
+            }
           } catch (err) {
             console.error("[PlayCommand] Error processing music:", err.message);
-            await aero.sendMessage(dockId, `❌ Failed to download or convert audio: ${err.message}`);
+            await aero.sendMessage(dockId, `❌ Song nahi mila: ${err.message}`);
           }
         })();
       }
@@ -3430,18 +3443,31 @@ I will automatically log it as a task and keep you updated! 😊`;
             (async () => {
               try {
                 console.log(`[WebhookPlayCommand] User requested song: "${songName}"`);
-                await aero.sendMessage(webhookDockId, `🎵 *Searching and downloading:* "${songName}"...`);
-                 const { downloadYoutubeAudio } = require("./music-downloader");
-                 const audioData = await downloadYoutubeAudio(songName);
-                 await aero.sendMessage(webhookDockId, "", null, null, null, {
-                   url: audioData.uri,
-                   fileName: audioData.filename,
-                   type: "document",
-                   mimeType: "audio/mp3"
-                 });
+                await aero.sendMessage(webhookDockId, `🎵 *Searching:* "${songName}"...`);
+                const { downloadYoutubeAudio } = require("./music-downloader");
+                const audioData = await downloadYoutubeAudio(songName);
+                if (audioData.isDirectUrl) {
+                  // JioSaavn CDN URL — pass directly, no base64 (avoids 413 Payload Too Large)
+                  console.log(`[WebhookPlayCommand] Sending JioSaavn CDN URL directly for: ${audioData.filename}`);
+                  await aero.sendMessage(webhookDockId, "", null, null, null, {
+                    url: audioData.uri,
+                    fileName: audioData.filename,
+                    type: "document",
+                    mimeType: "audio/mp3"
+                  });
+                } else {
+                  // Base64 fallback (YouTube yt-dlp download)
+                  console.log(`[WebhookPlayCommand] Sending base64 audio for: ${audioData.filename}`);
+                  await aero.sendMessage(webhookDockId, "", null, null, null, {
+                    url: audioData.uri,
+                    fileName: audioData.filename,
+                    type: "document",
+                    mimeType: "audio/mp3"
+                  });
+                }
               } catch (err) {
                 console.error("[WebhookPlayCommand] Error processing music:", err.message);
-                await aero.sendMessage(webhookDockId, `❌ Failed to download or convert audio: ${err.message}`);
+                await aero.sendMessage(webhookDockId, `❌ Song nahi mila: ${err.message}`);
               }
             })();
           }

@@ -61,12 +61,10 @@ class YtMusicService {
           });
           const downloadUrl = authRes.data.auth_url;
           if (downloadUrl) {
-            console.log(`[YtMusicService] Found JioSaavn download URL for song: "${song.title || song.song}"`);
-            return {
-              url: downloadUrl,
-              title: song.title || song.song,
-              artist: song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || ""
-            };
+            const title = song.title || song.song || query;
+            const artist = song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || "";
+            console.log(`[YtMusicService] Found JioSaavn CDN URL for: "${title}" by "${artist}"`);
+            return { url: downloadUrl, title, artist };
           }
         }
       }
@@ -74,34 +72,6 @@ class YtMusicService {
       console.warn(`[YtMusicService] JioSaavn search/resolve failed:`, err.message);
     }
     return null;
-  }
-
-  /**
-   * Downloads JioSaavn CDN URL directly via axios (no yt-dlp needed).
-   * JioSaavn returns a direct MP4/MP3 CDN stream — just download it as binary.
-   */
-  async _downloadJioSaavnDirect(cdnUrl, filename) {
-    console.log(`[YtMusicService] Downloading JioSaavn CDN URL directly via axios...`);
-    const response = await axios.get(cdnUrl, {
-      responseType: "arraybuffer",
-      timeout: 30000,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.jiosaavn.com/",
-        "Accept": "*/*"
-      },
-      maxContentLength: 20 * 1024 * 1024 // 20MB max
-    });
-
-    const buffer = Buffer.from(response.data);
-    if (buffer.length < 1000) {
-      throw new Error(`JioSaavn direct download returned too-small buffer (${buffer.length} bytes). Possibly 403 or redirect.`);
-    }
-
-    console.log(`[YtMusicService] JioSaavn direct download success: ${buffer.length} bytes`);
-    const base64Data = buffer.toString("base64");
-    // JioSaavn returns MP4 container but it's actually AAC audio — treat as mp3 for compatibility
-    return `data:audio/mp3;base64,${base64Data}`;
   }
 
   async downloadAudio(query) {
@@ -114,24 +84,24 @@ class YtMusicService {
 
     let resolvedFilename = `${query.trim()}.mp3`;
 
-    // ── STEP 1: Try JioSaavn with direct axios download (no yt-dlp) ──
+    // ── STEP 1: Try JioSaavn — return CDN URL directly (no download, no base64!) ──
     const saavnData = await this.searchJioSaavnUrl(query);
     if (saavnData) {
-      resolvedFilename = `${saavnData.title} - ${saavnData.artist}.mp3`.replace(/[^a-zA-Z0-9_\-\s\.]/g, "");
-      try {
-        const audioUri = await this._downloadJioSaavnDirect(saavnData.url, resolvedFilename);
-        console.log(`[YtMusicService] ✅ JioSaavn direct download succeeded!`);
-        return { uri: audioUri, filename: resolvedFilename };
-      } catch (saavnErr) {
-        console.warn(`[YtMusicService] JioSaavn direct download failed: ${saavnErr.message}. Falling back to yt-dlp...`);
-      }
+      resolvedFilename = `${saavnData.title} - ${saavnData.artist}.mp3`.replace(/[^a-zA-Z0-9_\-\s\.]/g, "").trim();
+      console.log(`[YtMusicService] ✅ JioSaavn CDN URL ready — sending directly, no download needed!`);
+      // Return the CDN URL directly — server.js will pass it in attachment.url
+      return {
+        uri: saavnData.url,  // Direct CDN URL (not base64)
+        filename: resolvedFilename,
+        isDirectUrl: true     // Flag to tell server.js this is a URL not base64
+      };
     }
 
     // ── STEP 2: Try yt-dlp for YouTube (if available) ──
     const isAvailable = await checkSystemDependencies();
     if (!isAvailable) {
       console.warn("[YtMusicService] yt-dlp/ffmpeg not available. Returning silent fallback.");
-      return { uri: MOCK_SILENT_MP3, filename: "silent.mp3" };
+      return { uri: MOCK_SILENT_MP3, filename: "silent.mp3", isDirectUrl: false };
     }
 
     // Try YouTube direct URL first, then search
@@ -148,14 +118,14 @@ class YtMusicService {
         const audioUri = await this._executeYtDlp(target.url);
         if (audioUri) {
           console.log(`[YtMusicService] ✅ yt-dlp download succeeded: ${target.name}`);
-          return { uri: audioUri, filename: resolvedFilename };
+          return { uri: audioUri, filename: resolvedFilename, isDirectUrl: false };
         }
       } catch (err) {
         console.warn(`[YtMusicService] yt-dlp failed for ${target.name}:`, err.message);
       }
     }
 
-    throw new Error("All download sources (JioSaavn direct + YouTube yt-dlp) failed.");
+    throw new Error("All download sources (JioSaavn + YouTube yt-dlp) failed.");
   }
 
   _executeYtDlp(target) {
@@ -236,7 +206,7 @@ class YtMusicService {
 }
 
 /**
- * Downloads a song from JioSaavn (primary) or YouTube (fallback) using YtMusicService.
+ * Downloads/resolves a song from JioSaavn (primary) or YouTube (fallback) using YtMusicService.
  */
 async function downloadYoutubeAudio(query) {
   return await YtMusicService.instance.downloadAudio(query);
