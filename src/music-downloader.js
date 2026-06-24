@@ -4,6 +4,7 @@ const { exec } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const axios = require("axios");
 
 // 1-second silent MP3 base64 fallback for local development without yt-dlp/ffmpeg
 const MOCK_SILENT_MP3 = "data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//sQxAAs8AAA0gAAAAAANVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV";
@@ -34,11 +35,52 @@ class YtMusicService {
     return this._instance;
   }
 
+  async searchJioSaavnUrl(query) {
+    try {
+      const searchUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&q=${encodeURIComponent(query)}&_format=json&_marker=0&ctx=web6dot0&api_version=4`;
+      console.log(`[YtMusicService] Searching JioSaavn for: "${query}"`);
+      const res = await axios.get(searchUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json"
+        },
+        timeout: 10000
+      });
+      const results = res.data.results || [];
+      if (results.length > 0) {
+        const song = results[0];
+        const encryptedUrl = song.more_info?.encrypted_media_url;
+        if (encryptedUrl) {
+          const authUrl = `https://www.jiosaavn.com/api.php?__call=song.generateAuthToken&url=${encodeURIComponent(encryptedUrl)}&bitrate=320&api_version=4&_format=json&ctx=web6dot0`;
+          const authRes = await axios.get(authUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/json"
+            },
+            timeout: 10000
+          });
+          const downloadUrl = authRes.data.auth_url;
+          if (downloadUrl) {
+            console.log(`[YtMusicService] Found JioSaavn download URL for song: "${song.title || song.song}"`);
+            return {
+              url: downloadUrl,
+              title: song.title || song.song,
+              artist: song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || ""
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[YtMusicService] JioSaavn search/resolve failed:`, err.message);
+    }
+    return null;
+  }
+
   async downloadAudio(query) {
     const isAvailable = await checkSystemDependencies();
     if (!isAvailable) {
       console.warn("[YtMusicService] System dependencies (yt-dlp or ffmpeg) are missing. Using silent fallback.");
-      return MOCK_SILENT_MP3;
+      return { uri: MOCK_SILENT_MP3, filename: "silent.mp3" };
     }
 
     // Enhance query accuracy if it is a simple song name without standard music suffixes
@@ -50,20 +92,22 @@ class YtMusicService {
 
     // List of sources to try sequentially
     const targets = [];
+    let resolvedFilename = `${query.trim()}.mp3`;
 
-    // 1. YouTube Resolved Direct Watch URL
+    // 1. JioSaavn Direct URL (Primary Source - Fast and Accurate)
+    const saavnData = await this.searchJioSaavnUrl(query);
+    if (saavnData) {
+      targets.push({ url: saavnData.url, name: `JioSaavn Direct URL (${saavnData.title} by ${saavnData.artist})` });
+      resolvedFilename = `${saavnData.title} - ${saavnData.artist}.mp3`.replace(/[^a-zA-Z0-9_\-\s\.]/g, "");
+    }
+
+    // 2. YouTube Resolved Direct Watch URL
     const ytUrl = await this.searchYoutubeUrl(enhancedQuery);
     if (ytUrl) {
       targets.push({ url: ytUrl, name: "YouTube Direct URL" });
     }
 
-    // 2. SoundCloud Resolved Direct URL (Alternative Source)
-    const scUrl = await this.searchSoundCloudUrl(enhancedQuery);
-    if (scUrl) {
-      targets.push({ url: scUrl, name: "SoundCloud Direct URL" });
-    }
-
-    // 3. YouTube Search Query Fallback (Legacy search)
+    // 3. YouTube Search Query Fallback
     targets.push({ url: `ytsearch1:${enhancedQuery}`, name: "YouTube Search Query" });
 
     // Iterate through download sources
@@ -73,14 +117,14 @@ class YtMusicService {
         const audioUri = await this._executeDownload(target.url);
         if (audioUri) {
           console.log(`[YtMusicService] Successful download using: ${target.name}`);
-          return audioUri;
+          return { uri: audioUri, filename: resolvedFilename };
         }
       } catch (err) {
         console.warn(`[YtMusicService] Download failed for ${target.name}:`, err.message);
       }
     }
 
-    throw new Error("All download sources (YouTube Direct, SoundCloud, and YouTube Search) failed.");
+    throw new Error("All download sources (JioSaavn, YouTube Direct, and YouTube Search) failed.");
   }
 
   _executeDownload(target) {

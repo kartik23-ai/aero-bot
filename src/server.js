@@ -2305,9 +2305,14 @@ I will automatically log it as a task and keep you updated! 😊`;
           try {
             console.log(`[PlayCommand] User requested song: "${songName}"`);
             await aero.sendMessage(dockId, `🎵 *Searching and downloading:* "${songName}"...`);
-            const { downloadYoutubeAudio } = require("./music-downloader");
-            const base64Audio = await downloadYoutubeAudio(songName);
-            await aero.sendMessage(dockId, "", null, null, base64Audio);
+             const { downloadYoutubeAudio } = require("./music-downloader");
+             const audioData = await downloadYoutubeAudio(songName);
+             await aero.sendMessage(dockId, "", null, null, null, {
+               url: audioData.uri,
+               fileName: audioData.filename,
+               type: "document",
+               mimeType: "audio/mp3"
+             });
           } catch (err) {
             console.error("[PlayCommand] Error processing music:", err.message);
             await aero.sendMessage(dockId, `❌ Failed to download or convert audio: ${err.message}`);
@@ -2459,8 +2464,14 @@ I will automatically log it as a task and keep you updated! 😊`;
           // Convert audio to base64 Data URI
           const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
           
-          // Send it directly as an audio attachment
-          await aero.sendMessage(dockId, `🎤 Voice Response for @${senderName}`, null, isGroup, base64Audio);
+          // Send it directly as an audio attachment with custom filename
+          const filename = `Voice_Note_${Date.now()}.mp3`;
+          await aero.sendMessage(dockId, `🎤 Voice Response for @${senderName}`, null, isGroup, null, {
+            url: base64Audio,
+            fileName: filename,
+            type: "document",
+            mimeType: "audio/mp3"
+          });
           
           // Track AI request metrics for voice notes
           groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -3420,9 +3431,14 @@ I will automatically log it as a task and keep you updated! 😊`;
               try {
                 console.log(`[WebhookPlayCommand] User requested song: "${songName}"`);
                 await aero.sendMessage(webhookDockId, `🎵 *Searching and downloading:* "${songName}"...`);
-                const { downloadYoutubeAudio } = require("./music-downloader");
-                const base64Audio = await downloadYoutubeAudio(songName);
-                await aero.sendMessage(webhookDockId, "", null, null, base64Audio);
+                 const { downloadYoutubeAudio } = require("./music-downloader");
+                 const audioData = await downloadYoutubeAudio(songName);
+                 await aero.sendMessage(webhookDockId, "", null, null, null, {
+                   url: audioData.uri,
+                   fileName: audioData.filename,
+                   type: "document",
+                   mimeType: "audio/mp3"
+                 });
               } catch (err) {
                 console.error("[WebhookPlayCommand] Error processing music:", err.message);
                 await aero.sendMessage(webhookDockId, `❌ Failed to download or convert audio: ${err.message}`);
@@ -3446,7 +3462,13 @@ I will automatically log it as a task and keep you updated! 😊`;
                 console.log(`[Webhook gTTS] Generating audio for: "${voiceText}"`);
                 const audioBuffer = await providers.generateTTSAudio(voiceText, "hi");
                 const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
-                await aero.sendMessage(webhookDockId, `🎤 Voice Response for @${senderName}`, null, true, base64Audio);
+                const filename = `Voice_Note_${Date.now()}.mp3`;
+                await aero.sendMessage(webhookDockId, `🎤 Voice Response for @${senderName}`, null, true, null, {
+                  url: base64Audio,
+                  fileName: filename,
+                  type: "document",
+                  mimeType: "audio/mp3"
+                });
                 groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                 saveGroupDb(db);
               } catch (err) {

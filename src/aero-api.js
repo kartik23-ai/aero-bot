@@ -177,9 +177,9 @@ class AeroAPI {
     }
   }
 
-  async sendMessage(dockId, text, image = null, isGroup = null, document = null) {
+  async sendMessage(dockId, text, image = null, isGroup = null, document = null, attachment = null) {
     return new Promise((resolve, reject) => {
-      this._messageQueue.push({ dockId, text, image, isGroup, document, resolve, reject });
+      this._messageQueue.push({ dockId, text, image, isGroup, document, attachment, resolve, reject });
       this._processQueue();
     });
   }
@@ -233,6 +233,9 @@ class AeroAPI {
           }
           if (item.document) {
             payload.document = item.document;
+          }
+          if (item.attachment) {
+            payload.attachment = item.attachment;
           }
           
           console.log(`[AeroAPI] [Outbound Queue] Sending message to ${item.dockId}...`);
