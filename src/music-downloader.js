@@ -133,7 +133,7 @@ class YtMusicService {
       const tempFileId = "yt-" + Math.random().toString(36).substring(2, 10);
       const outputPathPattern = path.join(tempDir, `${tempFileId}.%(ext)s`);
       
-      const cmd = `yt-dlp --no-check-certificates --extract-audio --audio-format mp3 --audio-quality 0 --max-filesize 15M -o "${outputPathPattern}" "${target}"`;
+      const cmd = `yt-dlp --no-check-certificates --impersonate chrome --retries 0 --fragment-retries 0 --socket-timeout 8 --extract-audio --audio-format mp3 --audio-quality 0 --max-filesize 15M -o "${outputPathPattern}" "${target}"`;
       console.log(`[YtMusicService] Executing: ${cmd}`);
 
       exec(cmd, { timeout: 120000 }, (error, stdout, stderr) => {
@@ -209,7 +209,19 @@ class YtMusicService {
       console.log(`[YtMusicService] Searching for SoundCloud URL: "${searchQuery}"`);
       const searchRes = await providers.webSearch(searchQuery);
       if (searchRes && searchRes.results && searchRes.results.length > 0) {
-        const match = searchRes.results.find(r => r.url && r.url.includes("soundcloud.com/"));
+        const match = searchRes.results.find(r => {
+          if (!r.url) return false;
+          // Filter to only match SoundCloud track URLs (e.g. soundcloud.com/username/track-slug)
+          if (/\/(sets|discover|stream|you|charts|search|tags|upload|terms|pages)\//i.test(r.url)) return false;
+          // Path should have exactly two segments: /username/track-slug
+          try {
+            const parsed = new URL(r.url);
+            const pathSegments = parsed.pathname.split("/").filter(Boolean);
+            return pathSegments.length === 2;
+          } catch {
+            return false;
+          }
+        });
         if (match) {
           console.log(`[YtMusicService] Found matching SoundCloud URL: ${match.url}`);
           return match.url;
