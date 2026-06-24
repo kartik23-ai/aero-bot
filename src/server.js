@@ -517,6 +517,15 @@ async function fetchImageBase64(imageUrl) {
   }
 }
 
+const memeForbiddenRegex = /\b(god|bhagwan|bhagvaan|allah|jesus|shiva|shiv|krishna|ram|rama|hanuman|ganesha|ganesh|durga|kali|vishnu|bramha|brahma|mahadev|bholenath|bhole|ramji|radha|sita|hanumanji|krishn|saibaba|christ|muhammad|prophet|quran|bible|geeta|gita|vedas|hindu|muslim|christian|sikh|gurunanak|buddha|buddhist|temple|masjid|mosque|church|gurudwara|mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chutiya|gandu|lund|gaand|fuck|bitch|asshole|bastard|randi|bhadva|cunt|dick|whore|pussy|penis|vagina|chut|loda|muth|mutthal|saala|kamina|harami|sex|nude|naked|porn|xxx|nsfw|adult)\b/i;
+
+function isSafeMemeText(text) {
+  if (!text) return true;
+  const clean = text.toLowerCase();
+  if (clean.includes("18+")) return false;
+  return !memeForbiddenRegex.test(clean);
+}
+
 async function fetchRedditMeme(subreddit = "", depth = 0) {
   if (depth > 5) {
     throw new Error("Could not find any safe non-NSFW memes after 5 retries.");
@@ -527,6 +536,11 @@ async function fetchRedditMeme(subreddit = "", depth = 0) {
     const data = res.data;
     if (data.nsfw || data.spoiler) {
       console.warn(`[MemeGen] Fetched meme was NSFW/Spoiler, retrying (depth: ${depth + 1})...`);
+      return fetchRedditMeme(subreddit, depth + 1);
+    }
+    // Safety check on fetched fields
+    if (!isSafeMemeText(data.title) || !isSafeMemeText(data.subreddit) || !isSafeMemeText(data.url)) {
+      console.warn(`[MemeGen] Fetched meme failed safety filters, retrying (depth: ${depth + 1})...`);
       return fetchRedditMeme(subreddit, depth + 1);
     }
     return data;
@@ -547,11 +561,13 @@ async function fetchRedditMeme(subreddit = "", depth = 0) {
         if (post.nsfw || post.over_18 || post.spoiler) continue;
         const imgUrl = post.url;
         if (imgUrl && (imgUrl.endsWith(".jpg") || imgUrl.endsWith(".jpeg") || imgUrl.endsWith(".png") || imgUrl.endsWith(".webp"))) {
-          valid.push({
-            title: post.title,
-            url: imgUrl,
-            subreddit: post.subreddit
-          });
+          if (isSafeMemeText(post.title) && isSafeMemeText(post.subreddit) && isSafeMemeText(imgUrl)) {
+            valid.push({
+              title: post.title,
+              url: imgUrl,
+              subreddit: post.subreddit
+            });
+          }
         }
       }
       if (valid.length > 0) {
@@ -601,11 +617,13 @@ async function searchRedditMeme(query) {
       
       const imgUrl = post.url;
       if (imgUrl && (imgUrl.endsWith(".jpg") || imgUrl.endsWith(".jpeg") || imgUrl.endsWith(".png") || imgUrl.endsWith(".gif") || imgUrl.endsWith(".webp") || imgUrl.includes("preview.redd.it") || imgUrl.includes("imgur.com"))) {
-        validMemes.push({
-          title: post.title,
-          url: imgUrl,
-          subreddit: post.subreddit
-        });
+        if (isSafeMemeText(post.title) && isSafeMemeText(post.subreddit) && isSafeMemeText(imgUrl)) {
+          validMemes.push({
+            title: post.title,
+            url: imgUrl,
+            subreddit: post.subreddit
+          });
+        }
       }
     }
     
@@ -618,6 +636,7 @@ async function searchRedditMeme(query) {
   }
   return null;
 }
+
 
 function extractAndParseJson(text) {
   if (!text) throw new Error("Empty text input");
@@ -4440,20 +4459,146 @@ Keep it concise, highly readable, and fun!`;
 async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings) {
   const topic = argsText.trim();
   const cleanTopic = topic.replace(/^@/, "").trim().toLowerCase();
+
+  // Helper to generate AI meme via Memegen template
+  async function generateAiTemplateMeme() {
+    let userContext = "";
+    if (topic) {
+      userContext += `User Topic: ${topic}\n`;
+      const cleanTopicName = topic.replace(/^@/, "").trim().toLowerCase();
+      const matchedMember = Object.values(groupSettings.members || {}).find(m => (m.username || "").toLowerCase() === cleanTopicName);
+      if (matchedMember) {
+        const { HermesMemory } = require("./hermes-memory");
+        const memFacts = HermesMemory.compileFactsString(matchedMember.id);
+        userContext += `Target User Info (@${matchedMember.username}):\n${memFacts}\n`;
+      }
+    }
+    
+    loadChatsCacheIfNeeded();
+    const recentMsgs = (chatsCache && chatsCache[dockId]) ? chatsCache[dockId].slice(-20) : [];
+    if (recentMsgs.length > 0) {
+      userContext += `Recent Group Chat History:\n` + recentMsgs.map(m => `[${m.senderName}]: ${m.text}`).join("\n") + "\n";
+    }
+
+    const systemPrompt = `You are a savage, funny meme generator for a group chat.
+Your goal is to design a modern meme concept (GigaChad, Pepe, Drake, Distracted Boyfriend, Spiderman pointing, Trade Offer, etc.) and write captions based on the user's topic, recent chat history, or member facts.
+
+CRITICAL SAFETY RULES:
+1. You MUST NOT reference any God, deities, holy figures, or religions under any circumstances (e.g. no Shiva, Krishna, Allah, Jesus, Ram, Hanuman, Ganesha, God, Bhagwan, etc.).
+2. You MUST NOT use any abusive language, gaalis, profanity, vulgarity, bad words, or insults in Hindi, Hinglish, or English (e.g. no chutiya, gandu, lund, gaand, mc, bc, fuck, bitch, etc.).
+3. You MUST NOT include any 18+, adult, or NSFW content.
+
+Template options:
+- "pepe": Pepe the Frog
+- "gigachad": GigaChad smiling
+- "sad-kekw": Laughing KEKW
+- "kermit": Kermit sipping tea
+- "spiderman": Spider-man pointing at Spider-man
+- "woman-yelling-at-cat": Woman yelling at confused cat
+- "pika": Surprised Pikachu
+- "gru": Gru's plan panels
+- "always-has-been": Astronaut pointing gun
+- "panik-kalm": Panik / Kalm panels
+- "trade-offer": Trade offer
+- "weak-strong-doge": Swole Doge vs Cheems
+- "clown": Clown putting on makeup
+- "drake": Drake hotline bling
+- "distracted": Distracted boyfriend
+- "fine": This is fine dog
+- "doge": Doge
+- "spongebob": Mocking Spongebob
+- "two-buttons": Two buttons difficult choice
+- "disastergirl": Girl smiling in front of fire
+- "success": Success kid
+- "brain": Expanding brain
+- "grumpycat": Grumpy cat
+- "wonka": Condescending Willy Wonka
+- "rollsafe": Smart guy tapping head
+- "buzz": Buzz Lightyear pointing
+
+You MUST respond in JSON format ONLY:
+{
+  "template": "<one of the templates listed above>",
+  "topText": "<Top caption text, short and punchy>",
+  "bottomText": "<Bottom caption text, short and punchy>"
+}
+Do not include markdown code block formatting in your response, return raw JSON string.`;
+
+    const response = await ai.runChatCompletion({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Generate a meme for context:\n${userContext}` }
+      ],
+      temperature: 0.8
+    });
+
+    const resText = (response.choices[0]?.message?.content || "").trim();
+    let resJson = extractAndParseJson(resText);
+
+    if (!resJson.template || !resJson.topText || !resJson.bottomText) {
+      throw new Error("Invalid response format from AI");
+    }
+
+    // Safety validation on the captions
+    if (!isSafeMemeText(resJson.topText) || !isSafeMemeText(resJson.bottomText)) {
+      console.warn("[MemeGen] Filtered words detected in AI meme captions. Bypassing to safe fallback...");
+      resJson = {
+        template: "drake",
+        topText: "Group chat is wild",
+        bottomText: "Keeping it clean"
+      };
+    }
+
+    console.log(`[MemeCommand] Generating Memegen.link meme (Template: ${resJson.template})...`);
+    return await generateMemeBase64(resJson.template, resJson.topText, resJson.bottomText);
+  }
+
   try {
-    // 1. If topic is empty, fetch a completely random meme from Reddit
+    // 1. If topic is empty, randomly choose between fetching random Reddit meme (50%) and generating custom AI meme (50%)
     if (!topic) {
+      const mode = Math.random() < 0.5 ? "reddit" : "ai_template";
+      console.log(`[MemeCommand] Topic is empty. Selected mode: ${mode}`);
+      if (mode === "reddit") {
+        try {
+          const memeData = await fetchRedditMeme("");
+          const base64Uri = await fetchImageBase64(memeData.url);
+          await aero.sendMessage(dockId, "", base64Uri);
+          return;
+        } catch (err) {
+          console.warn("[MemeCommand] Failed to fetch random Reddit meme, trying AI template fallback...", err.message);
+        }
+      }
+
+      // If AI template or fallback
       try {
-        console.log("[MemeCommand] Topic is empty, fetching random hot meme from Reddit...");
-        const memeData = await fetchRedditMeme("");
-        const base64Uri = await fetchImageBase64(memeData.url);
+        const base64Uri = await generateAiTemplateMeme();
         await aero.sendMessage(dockId, "", base64Uri);
         return;
       } catch (err) {
-        console.error("[MemeCommand] Failed to fetch random Reddit meme, falling back to custom AI meme:", err.message);
+        console.error("[MemeCommand] AI template meme failed:", err.message);
       }
+      
+      // Ultimate safe Drake fallback
+      const base64Uri = await generateMemeBase64("drake", "When memes command fails", "But bot still delivers");
+      await aero.sendMessage(dockId, "", base64Uri);
+      return;
     }
 
+    // 2. If it's a mention (starts with @), always generate custom AI template meme
+    if (topic.startsWith("@")) {
+      console.log(`[MemeCommand] Targeting member: ${topic}. Generating custom AI template meme...`);
+      try {
+        const base64Uri = await generateAiTemplateMeme();
+        await aero.sendMessage(dockId, "", base64Uri);
+      } catch (err) {
+        console.error("[MemeCommand] Failed to generate AI template meme for user mention:", err.message);
+        const base64Uri = await generateMemeBase64("drake", `Meme for ${topic}`, "Bot safety fallback");
+        await aero.sendMessage(dockId, "", base64Uri);
+      }
+      return;
+    }
+
+    // 3. Standard topic search flow
     const SUBREDDIT_MAP = {
       gaming: "gamingmemes",
       game: "gamingmemes",
@@ -4487,217 +4632,66 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
       dank: "IndianDankMemes"
     };
 
-    if (!topic.startsWith("@")) {
-      const targetSubreddit = SUBREDDIT_MAP[cleanTopic];
-      
-      // 2a. If it's a known subreddit keyword, try Reddit first
-      if (targetSubreddit) {
-        try {
-          console.log(`[MemeCommand] Fetching Reddit meme from subreddit: r/${targetSubreddit}...`);
-          const memeData = await fetchRedditMeme(targetSubreddit);
-          const base64Uri = await fetchImageBase64(memeData.url);
-          await aero.sendMessage(dockId, "", base64Uri);
-          return;
-        } catch (err) {
-          console.warn(`[MemeCommand] Subreddit r/${targetSubreddit} fetch failed, trying search fallback...`);
-        }
-      }
-
-      // 2b. Priority: Search Reddit using custom query search
-      try {
-        console.log(`[MemeCommand] Searching Reddit for custom phrase: "${topic}"...`);
-        const redditMeme = await searchRedditMeme(topic);
-        if (redditMeme) {
-          console.log(`[MemeCommand] Downloading Reddit Search result: ${redditMeme.url}`);
-          const base64Uri = await fetchImageBase64(redditMeme.url);
-          await aero.sendMessage(dockId, "", base64Uri);
-          return;
-        }
-      } catch (err) {
-        console.error("[MemeCommand] Reddit search failed:", err.message);
-      }
-
-      // 2c. Fallback: Search Google Images via Serper
-      try {
-        const searchQuery = `${topic} meme`;
-        console.log(`[MemeCommand] Searching Serper.dev for images: "${searchQuery}"...`);
-        const searchResults = await serperImageSearch(searchQuery);
-        if (searchResults && searchResults.length > 0) {
-          for (let i = 0; i < Math.min(searchResults.length, 3); i++) {
-            const imgUrl = searchResults[i].imageUrl;
-            console.log(`[MemeCommand] Downloading Google Image result ${i + 1}: ${imgUrl}`);
-            try {
-              const base64Uri = await fetchImageBase64(imgUrl);
-              await aero.sendMessage(dockId, "", base64Uri);
-              return;
-            } catch (dlErr) {
-              console.warn(`[MemeCommand] Failed to download image from ${imgUrl}:`, dlErr.message);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("[MemeCommand] Google Image search failed:", err.message);
-      }
-    }
-
-    // 3. Fallback to AI generation if search returned nothing
-    let userContext = "";
-    if (topic) {
-      userContext += `User Topic: ${topic}\n`;
-      const cleanTopicName = topic.replace(/^@/, "").trim().toLowerCase();
-      const matchedMember = Object.values(groupSettings.members || {}).find(m => (m.username || "").toLowerCase() === cleanTopicName);
-      if (matchedMember) {
-        const { HermesMemory } = require("./hermes-memory");
-        const memFacts = HermesMemory.compileFactsString(matchedMember.id);
-        userContext += `Target User Info (@${matchedMember.username}):\n${memFacts}\n`;
-      }
-    }
+    const targetSubreddit = SUBREDDIT_MAP[cleanTopic];
     
-    loadChatsCacheIfNeeded();
-    const recentMsgs = (chatsCache && chatsCache[dockId]) ? chatsCache[dockId].slice(-20) : [];
-    if (recentMsgs.length > 0) {
-      userContext += `Recent Group Chat History:\n` + recentMsgs.map(m => `[${m.senderName}]: ${m.text}`).join("\n") + "\n";
+    // 3a. Known subreddit keyword
+    if (targetSubreddit) {
+      try {
+        console.log(`[MemeCommand] Fetching Reddit meme from subreddit: r/${targetSubreddit}...`);
+        const memeData = await fetchRedditMeme(targetSubreddit);
+        const base64Uri = await fetchImageBase64(memeData.url);
+        await aero.sendMessage(dockId, "", base64Uri);
+        return;
+      } catch (err) {
+        console.warn(`[MemeCommand] Subreddit r/${targetSubreddit} fetch failed, trying search fallback...`);
+      }
     }
 
-    let systemPromptAbusiveNote = "";
-    if (groupSettings.abusiveFilter) {
-      systemPromptAbusiveNote = `\nCRITICAL: The abusive language filter is ENABLED for this group. You MUST NOT use any abusive language, gaalis, profanity, vulgarity, bad words, or insults in Hindi, Hinglish, or English (e.g. no chutiya, gandu, lund, gaand, mc, bc, fuck, bitch, etc.) under any circumstances. Keep captions completely clean.`;
-    }
-
-    const systemPrompt = `You are a savage, funny meme generator for a group chat. ${systemPromptAbusiveNote}
-Your goal is to design a modern meme concept (GigaChad, Pepe, Drake, Distracted Boyfriend, Spiderman pointing, Trade Offer, etc.) and write captions based on the user's topic, recent chat history, or member facts.
-
-You must design BOTH:
-1. An AI image generation prompt for FLUX. FLUX can render readable text, so specify the scene and the exact text to write on the image in double quotes.
-2. A fallback template selection and captions for Memegen.link in case the AI image generator fails.
-
-Fallback template options:
-- "pepe": Pepe the Frog
-- "gigachad": GigaChad smiling
-- "sad-kekw": Laughing KEKW
-- "kermit": Kermit sipping tea
-- "spiderman": Spider-man pointing at Spider-man
-- "woman-yelling-at-cat": Woman yelling at confused cat
-- "pika": Surprised Pikachu
-- "gru": Gru's plan panels
-- "always-has-been": Astronaut pointing gun
-- "panik-kalm": Panik / Kalm panels
-- "trade-offer": Trade offer
-- "weak-strong-doge": Swole Doge vs Cheems
-- "clown": Clown putting on makeup
-- "drake": Drake hotline bling
-- "distracted": Distracted boyfriend
-- "fine": This is fine dog
-- "doge": Doge
-- "spongebob": Mocking Spongebob
-- "two-buttons": Two buttons difficult choice
-- "disastergirl": Girl smiling in front of fire
-- "success": Success kid
-- "brain": Expanding brain
-- "grumpycat": Grumpy cat
-- "wonka": Condescending Willy Wonka
-- "rollsafe": Smart guy tapping head
-- "buzz": Buzz Lightyear pointing
-
-You MUST respond in JSON format ONLY:
-{
-  "fluxPrompt": "<A detailed prompt for FLUX. Describe a funny modern meme layout, specifying the exact text in double quotes to be written on the image. E.g.: 'A funny modern Pepe the frog meme. Pepe is looking confused at a computer screen. In bold readable text at the top: \"ME LOOKING AT MY CODE\". In bold readable text at the bottom: \"IT ACTUALLY WORKS\".'>",
-  "fallback": {
-    "template": "<one of the templates listed above>",
-    "topText": "<Top caption text, short and punchy>",
-    "bottomText": "<Bottom caption text, short and punchy>"
-  }
-}
-Do not include markdown code block formatting in your response, return raw JSON string.`;
-
-    let response;
+    // 3b. Reddit custom search
     try {
-      response = await ai.runChatCompletion({
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Generate a meme for context:\n${userContext}` }
-        ],
-        temperature: 0.8
-      });
-    } catch (aiErr) {
-      console.warn("[MemeCommand] LLM completion failed, falling back to direct Reddit search/random meme:", aiErr.message);
-      if (topic && !topic.startsWith("@")) {
-        try {
-          const redditMeme = await searchRedditMeme(topic);
-          if (redditMeme) {
-            const base64Uri = await fetchImageBase64(redditMeme.url);
+      console.log(`[MemeCommand] Searching Reddit for custom phrase: "${topic}"...`);
+      const redditMeme = await searchRedditMeme(topic);
+      if (redditMeme) {
+        console.log(`[MemeCommand] Downloading Reddit Search result: ${redditMeme.url}`);
+        const base64Uri = await fetchImageBase64(redditMeme.url);
+        await aero.sendMessage(dockId, "", base64Uri);
+        return;
+      }
+    } catch (err) {
+      console.error("[MemeCommand] Reddit search failed:", err.message);
+    }
+
+    // 3c. Google Image search fallback
+    try {
+      const searchQuery = `${topic} meme`;
+      console.log(`[MemeCommand] Searching Serper.dev for images: "${searchQuery}"...`);
+      const searchResults = await serperImageSearch(searchQuery);
+      if (searchResults && searchResults.length > 0) {
+        for (let i = 0; i < Math.min(searchResults.length, 3); i++) {
+          const imgUrl = searchResults[i].imageUrl;
+          // Run safety filter on search results!
+          if (!isSafeMemeText(imgUrl)) continue;
+          console.log(`[MemeCommand] Downloading Google Image result ${i + 1}: ${imgUrl}`);
+          try {
+            const base64Uri = await fetchImageBase64(imgUrl);
             await aero.sendMessage(dockId, "", base64Uri);
             return;
+          } catch (dlErr) {
+            console.warn(`[MemeCommand] Failed to download image from ${imgUrl}:`, dlErr.message);
           }
-        } catch (searchErr) {
-          console.warn("[MemeCommand] Fallback search also failed:", searchErr.message);
         }
       }
-      // Failover to random hot Reddit meme
-      const memeData = await fetchRedditMeme("");
-      const base64Uri = await fetchImageBase64(memeData.url);
-      await aero.sendMessage(dockId, "", base64Uri);
-      return;
+    } catch (err) {
+      console.error("[MemeCommand] Google Image search failed:", err.message);
     }
 
-    const resText = (response.choices[0]?.message?.content || "").trim();
-    let resJson;
+    // 3d. Fallback to AI-generated template meme
+    console.log("[MemeCommand] Search modes failed, generating custom AI template meme...");
     try {
-      resJson = extractAndParseJson(resText);
-    } catch (parseErr) {
-      console.warn("[MemeCommand] Failed to parse AI response JSON, using fallback captions:", parseErr.message);
-      resJson = {
-        fluxPrompt: "A funny meme of a computer programmer looking surprised. In bold white text: 'WHEN THE CODE WORKS' and 'BUT YOU DON'T KNOW WHY'.",
-        fallback: {
-          template: "drake",
-          topText: "AI returned invalid format",
-          bottomText: "But here is a meme anyway"
-        }
-      };
-    }
-    
-    if (!resJson.fluxPrompt || !resJson.fallback || !resJson.fallback.template) {
-      throw new Error("Invalid response format from AI");
-    }
-
-    if (groupSettings.abusiveFilter) {
-      const isTopAbusive = globalAbusiveRegex.test(resJson.fallback.topText || "");
-      const isBottomAbusive = globalAbusiveRegex.test(resJson.fallback.bottomText || "");
-      if (isTopAbusive || isBottomAbusive) {
-        console.warn("[MemeGen] Abusive content detected in fallback captions. Replacing with safe captions...");
-        resJson.fallback.topText = "Group chat is wild";
-        resJson.fallback.bottomText = "Abusive filter on duty";
-        resJson.fallback.template = "drake";
-      }
-      if (globalAbusiveRegex.test(resJson.fluxPrompt)) {
-        console.warn("[MemeGen] Abusive content detected in FLUX prompt. Resetting prompt...");
-        resJson.fluxPrompt = "A funny meme of a computer programmer looking surprised. In bold white text: 'WHEN THE CODE WORKS' and 'BUT YOU DON'T KNOW WHY'.";
-      }
-    }
-
-    // A. Primary Try: Direct AI Image Generation (FLUX)
-    try {
-      console.log(`[MemeCommand] Generating direct AI meme using prompt: "${resJson.fluxPrompt}"...`);
-      const base64Uri = await generateImageBase64(resJson.fluxPrompt);
+      const base64Uri = await generateAiTemplateMeme();
       await aero.sendMessage(dockId, "", base64Uri);
-      return;
-    } catch (fluxErr) {
-      console.warn("[MemeCommand] Direct FLUX image generation failed, trying Memegen.link fallback:", fluxErr.message);
-    }
-
-    // B. Fallback: Memegen.link Template
-    console.log(`[MemeCommand] Falling back to Memegen.link (Template: ${resJson.fallback.template})...`);
-    const base64Uri = await generateMemeBase64(resJson.fallback.template, resJson.fallback.topText || "", resJson.fallback.bottomText || "");
-    await aero.sendMessage(dockId, "", base64Uri);
-  } catch (err) {
-    console.error("[Meme Command Error]:", err.message);
-    try {
-      console.log("[MemeCommand] Attempting to deliver completely random Reddit meme as last-resort fallback...");
-      const memeData = await fetchRedditMeme("");
-      const base64Uri = await fetchImageBase64(memeData.url);
-      await aero.sendMessage(dockId, "", base64Uri);
-    } catch (fallbackErr) {
-      console.error("[MemeCommand] Last-resort fallback also failed:", fallbackErr.message);
+    } catch (err) {
+      console.error("[MemeCommand] AI template meme fallback failed:", err.message);
       // Construct Drake fallback meme
       try {
         const base64Uri = await generateMemeBase64("drake", "Error generating custom meme", "But bot still sends a meme");
@@ -4706,8 +4700,12 @@ Do not include markdown code block formatting in your response, return raw JSON 
         await aero.sendMessage(dockId, `❌ Meme generate karne me error aaya: ${err.message}`);
       }
     }
+  } catch (err) {
+    console.error("[Meme Command Error]:", err.message);
+    await aero.sendMessage(dockId, `❌ Meme command failed: ${err.message}`);
   }
 }
+
 
 function handleDigestCommand(argsText, groupSettings, canEdit) {
   if (!canEdit) {

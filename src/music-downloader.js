@@ -40,10 +40,11 @@ async function downloadYoutubeAudio(query) {
     const outputPathPattern = path.join(tempDir, `${tempFileId}.%(ext)s`);
     
     // Command to search and download the first video as mp3
-    const cmd = `yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 -o "${outputPathPattern}" "ytsearch1:${query}"`;
+    // --no-check-certificates bypasses SSL cert issues on some containerized environments
+    const cmd = `yt-dlp --no-check-certificates --extract-audio --audio-format mp3 --audio-quality 0 --max-filesize 15M -o "${outputPathPattern}" "ytsearch1:${query}"`;
     console.log(`[MusicDownloader] Executing: ${cmd}`);
 
-    exec(cmd, (error, stdout, stderr) => {
+    exec(cmd, { timeout: 120000 }, (error, stdout, stderr) => {
       if (error) {
         console.error("[MusicDownloader] Exec error:", error.message);
         return reject(new Error("Failed to download audio from YouTube: " + error.message));
