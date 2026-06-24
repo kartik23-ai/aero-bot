@@ -59,6 +59,7 @@ const { providers } = require("./providers");
 let _totalBytesIn = 0;
 let _totalBytesOut = 0;
 const lastAiReplyTime = new Map();
+const activeGames = new Map();
 // Cache to track when docks were last fetched to throttle API requests (5s lifetime)
 let lastDocksFetchTime = 0;
 let inFlightDocksFetch = null;
@@ -359,7 +360,10 @@ function getGroupSettings(db, dockId) {
       digestEnabled: false,
       greetingEnabled: true,
       greetingMessage: null,
-      configLogs: []
+      configLogs: [],
+      customCommands: {},
+      afkUsers: {},
+      slowmodeSchedule: null
     };
   }
   const g = db.groups[dockId];
@@ -381,6 +385,9 @@ function getGroupSettings(db, dockId) {
   if (g.greetingEnabled === undefined) g.greetingEnabled = true;
   if (g.greetingMessage === undefined) g.greetingMessage = null;
   if (g.configLogs === undefined) g.configLogs = [];
+  if (g.customCommands === undefined) g.customCommands = {};
+  if (g.afkUsers === undefined) g.afkUsers = {};
+  if (g.slowmodeSchedule === undefined) g.slowmodeSchedule = null;
   return g;
 }
 
@@ -1300,6 +1307,9 @@ I will automatically log it as a task and keep you updated! 😊`;
       text,
       timestamp: new Date().toISOString()
     });
+    if (isGroup) {
+      await processAfkInteractions(db, dockId, senderId, senderName, text);
+    }
   }
 
   if (!assistantMode.enabled) return;
@@ -1705,6 +1715,194 @@ I will automatically log it as a task and keep you updated! 😊`;
         return;
       }
 
+      // Command 5: broadcast
+      if (lowerText.startsWith("/broadcast ") || lowerText.startsWith("broadcast ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        if (!targetQuery) {
+          await aero.sendMessage(dockId, "❌ Usage: `/broadcast <group_name_or_id_or_all> <message>`\nE.g.: `/broadcast awara Welcome to our group!`");
+          return;
+        }
+
+        let targetDocks = [];
+        if (targetQuery.toLowerCase() === "all") {
+          targetDocks = adminDocks;
+        } else {
+          const queries = targetQuery.split(",");
+          for (const q of queries) {
+            const found = adminDocks.find(d => 
+              d.id === q.trim() || d.name.toLowerCase().includes(q.trim().toLowerCase())
+            );
+            if (found) targetDocks.push(found);
+          }
+        }
+
+        if (targetDocks.length === 0) {
+          await aero.sendMessage(dockId, `❌ Koi matching group nahi mila. Sahi name/ID check karein.`);
+          return;
+        }
+
+        const msgText = trimmedText.substring(trimmedText.indexOf(targetQuery) + targetQuery.length).trim();
+        if (!msgText && !data.message?.image && !data.message?.audio && !data.message?.document) {
+          await aero.sendMessage(dockId, "❌ Please specify a message or attachment to broadcast.");
+          return;
+        }
+
+        let imageUri = data.message?.image || null;
+        let docUri = data.message?.document || null;
+        let voiceUri = data.message?.audio || null;
+
+        const prefix = `📢 **ANNOUNCEMENT (Admin):**\n\n`;
+        const broadcastText = msgText ? prefix + msgText : prefix;
+
+        let successCount = 0;
+        for (const tDock of targetDocks) {
+          try {
+            if (imageUri) {
+              await aero.sendMessage(tDock.id, broadcastText, imageUri);
+            } else if (docUri) {
+              await aero.sendMessage(tDock.id, broadcastText, null, null, docUri);
+            } else if (voiceUri) {
+              await aero.sendMessage(tDock.id, broadcastText, null, null, voiceUri);
+            } else {
+              await aero.sendMessage(tDock.id, broadcastText);
+            }
+            successCount++;
+          } catch (err) {
+            console.error(`[Broadcast] Failed to send to ${tDock.name}:`, err.message);
+          }
+        }
+
+        await aero.sendMessage(dockId, `✅ Announcement successfully broadcasted to ${successCount}/${targetDocks.length} groups.`);
+        return;
+      }
+
+      // Command 6: createcommand
+      if (lowerText.startsWith("/createcommand ") || lowerText.startsWith("createcommand ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        const trigger = parts[2];
+        if (!targetQuery || !trigger) {
+          await aero.sendMessage(dockId, "❌ Usage: `/createcommand <group_name_or_id> <trigger_with_slash> <response>`\nE.g.: `/createcommand awara /insta https://instagram.com/mygroup`");
+          return;
+        }
+
+        const targetDock = adminDocks.find(d => 
+          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+        );
+        if (!targetDock) {
+          await aero.sendMessage(dockId, `❌ Match nahi mila. Sahi group name/ID use karein.`);
+          return;
+        }
+
+        if (!trigger.startsWith("/")) {
+          await aero.sendMessage(dockId, `❌ Trigger commands '/' se start hone chahiye. E.g.: \`/insta\``);
+          return;
+        }
+
+        const searchStr = trigger;
+        const triggerIdx = trimmedText.indexOf(searchStr);
+        const responseText = trimmedText.substring(triggerIdx + searchStr.length).trim();
+
+        if (!responseText) {
+          await aero.sendMessage(dockId, "❌ Please specify a response text.");
+          return;
+        }
+
+        const gSettings = getGroupSettings(db, targetDock.id);
+        if (!gSettings.customCommands) gSettings.customCommands = {};
+        gSettings.customCommands[trigger.toLowerCase()] = responseText;
+        saveGroupDb(db);
+        logConfigChange(db, targetDock.id, senderId, senderName, `Custom command ${trigger} created/updated`);
+
+        await aero.sendMessage(dockId, `✅ Custom command **${trigger}** successfully registered for **${targetDock.name}**.`);
+        return;
+      }
+
+      // Command 7: deletecommand
+      if (lowerText.startsWith("/deletecommand ") || lowerText.startsWith("deletecommand ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        const trigger = parts[2];
+        if (!targetQuery || !trigger) {
+          await aero.sendMessage(dockId, "❌ Usage: `/deletecommand <group_name_or_id> <trigger>`\nE.g.: `/deletecommand awara /insta`");
+          return;
+        }
+
+        const targetDock = adminDocks.find(d => 
+          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+        );
+        if (!targetDock) {
+          await aero.sendMessage(dockId, `❌ Match nahi mila. Sahi group name/ID use karein.`);
+          return;
+        }
+
+        const gSettings = getGroupSettings(db, targetDock.id);
+        if (!gSettings.customCommands || !gSettings.customCommands[trigger.toLowerCase()]) {
+          await aero.sendMessage(dockId, `❌ Command **${trigger}** is group me registered nahi hai.`);
+          return;
+        }
+
+        delete gSettings.customCommands[trigger.toLowerCase()];
+        saveGroupDb(db);
+        logConfigChange(db, targetDock.id, senderId, senderName, `Custom command ${trigger} deleted`);
+
+        await aero.sendMessage(dockId, `✅ Custom command **${trigger}** deleted for **${targetDock.name}**.`);
+        return;
+      }
+
+      // Command 8: slowmode_schedule
+      if (lowerText.startsWith("/slowmode_schedule ") || lowerText.startsWith("slowmode_schedule ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        const secondsStr = parts[2];
+        const durationStr = parts[3];
+
+        if (!targetQuery || !secondsStr || !durationStr) {
+          await aero.sendMessage(dockId, "❌ Usage: `/slowmode_schedule <group_name_or_id> <slowmode_seconds> <duration_minutes>`\nE.g.: `/slowmode_schedule awara 30 120` (Sets 30s slowmode for 2 hours)");
+          return;
+        }
+
+        const targetDock = adminDocks.find(d => 
+          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+        );
+        if (!targetDock) {
+          await aero.sendMessage(dockId, `❌ Match nahi mila. Sahi group name/ID use karein.`);
+          return;
+        }
+
+        const seconds = parseInt(secondsStr, 10);
+        const durationMin = parseInt(durationStr, 10);
+
+        if (isNaN(seconds) || seconds < 0 || isNaN(durationMin) || durationMin <= 0) {
+          await aero.sendMessage(dockId, "❌ Invalid inputs. Seconds must be >= 0 and duration in minutes must be > 0.");
+          return;
+        }
+
+        const gSettings = getGroupSettings(db, targetDock.id);
+        gSettings.slowmodeSeconds = seconds;
+        
+        if (seconds === 0) {
+          gSettings.slowmodeSchedule = null;
+          logConfigChange(db, targetDock.id, senderId, senderName, `Slowmode disabled`);
+          await aero.sendMessage(dockId, `✅ Slowmode disabled for **${targetDock.name}**.`);
+        } else {
+          const endTime = Date.now() + durationMin * 60 * 1000;
+          gSettings.slowmodeSchedule = { seconds, endTime };
+          logConfigChange(db, targetDock.id, senderId, senderName, `Slowmode set to ${seconds}s for ${durationMin} minutes`);
+          await aero.sendMessage(dockId, `✅ Slowmode of **${seconds}s** scheduled for **${durationMin} mins** in **${targetDock.name}**.`);
+          
+          try {
+            await aero.sendMessage(targetDock.id, `⏳ **[Slowmode Alert]:** Admin has enabled a scheduled slowmode of **${seconds}s** for the next **${durationMin} minutes**.`);
+          } catch (err) {
+            console.error(`[SlowmodeSchedule] Failed to notify dock ${targetDock.id}:`, err.message);
+          }
+        }
+        
+        saveGroupDb(db);
+        return;
+      }
+
       // Text-Only conversational Guide AI (stateless or single-turn helper)
       if (text) {
         try {
@@ -1725,15 +1923,19 @@ ${dockListText}
 Available DM Commands:
 1. /docks - Lists all groups you manage, their IDs, and current greeting settings.
 2. /greeting <group_name_or_id> <on/off> - Turn the welcome greeting message ON or OFF for a group.
-3. /setgreeting <group_name_or_id> <message> - Set a custom greeting message. You can use placeholders: {username} (adds @username), {name} (display name), and {groupname} (group name).
-4. /logs <group_name_or_id> - View the last 10 configuration changes made to the group.
+3. /setgreeting <group_name_or_id> <message> - Set a custom greeting message. Placeholders: {username}, {name}, and {groupname}.
+4. /logs <group_name_or_id> - View the last 10 configuration changes.
+5. /broadcast <group_name_or_id_or_all> <message> - Send announcements (with attachments if present) to one or all groups you manage.
+6. /createcommand <group_name_or_id> <trigger_with_slash> <response> - Create custom command auto-replies.
+7. /deletecommand <group_name_or_id> <trigger_with_slash> - Delete custom commands.
+8. /slowmode_schedule <group_name_or_id> <seconds> <duration_minutes> - Schedule slowmode for a limited time.
 
 Your instructions:
 - Respond in Hinglish.
 - Be helpful, concise, and friendly.
-- If the user wants to make a change, identify the matching group from their list (e.g., if they say "awara", map it to "Awara Group" / "6a098ac946dc268297b10e39").
+- If the user wants to make a change, identify the matching group from their list.
 - Do NOT execute commands. Instead, tell the user the exact command they should type (e.g. \`/setgreeting awara Welcome to {name}!\`) to make that change.
-- Keep the conversation strictly focused on assisting them with these commands. Do not generate images, memes, or play music.`;
+- Keep the conversation strictly focused on assisting them with these commands.`;
 
           const messages = [
             { role: "system", content: systemPrompt },
@@ -2508,6 +2710,45 @@ Your instructions:
         })();
         reply = null;
       }
+    } else if (cmdName === "catchup" || cmdName === "recap") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleCatchupCommand(dockId);
+    } else if (cmdName === "referee" || cmdName === "debate") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleRefereeCommand(dockId);
+    } else if (cmdName === "makememe") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleMakeMemeCommand(dockId, argsText, groupSettings);
+    } else if (cmdName === "vibe") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleVibeCommand(dockId);
+    } else if (cmdName === "roast") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleRoastCommand(dockId, argsText, groupSettings);
+    } else if (cmdName === "praise") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handlePraiseCommand(dockId, argsText, groupSettings);
+    } else if (cmdName === "trivia") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleTriviaCommand(dockId, senderId, text);
+    } else if (cmdName === "ans") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleAnsCommand(dockId, senderId, senderName, argsText);
+    } else if (cmdName === "wordchain") {
+      if (groupSettings.botDisabled) return;
+      reply = null;
+      handleWordChainCommand(dockId, senderId, text);
+    } else if (cmdName === "afk") {
+      reply = null;
+      handleAfkCommand(dockId, senderId, senderName, argsText, groupSettings);
     } else if (cmdName === "meme") {
       if (groupSettings.botDisabled) {
         console.log(`[BotControl] Bot is disabled for dock ${dockId}. Skipping meme command.`);
@@ -2995,6 +3236,36 @@ if (require.main === module) {
     }
   })();
 
+async function checkSlowmodeSchedules() {
+  const db = loadGroupDb();
+  if (!db.groups) return;
+  const now = Date.now();
+  let dbChanged = false;
+  
+  for (const dockId of Object.keys(db.groups)) {
+    const settings = db.groups[dockId];
+    if (settings.slowmodeSchedule && settings.slowmodeSchedule.endTime) {
+      if (now >= settings.slowmodeSchedule.endTime) {
+        console.log(`[SlowmodeScheduler] Slowmode schedule expired for dock ${dockId}. Resetting slowmode to 0.`);
+        settings.slowmodeSeconds = 0;
+        settings.slowmodeSchedule = null;
+        dbChanged = true;
+        
+        try {
+          await aero.sendMessage(dockId, "⏳ **[Slowmode Alert]:** Scheduled slowmode duration has ended. Slowmode has been automatically disabled.");
+          logConfigChange(db, dockId, "system", "System Scheduler", "Slowmode reset to 0 (scheduled end reached)");
+        } catch (err) {
+          console.error(`[SlowmodeScheduler] Failed to send reset message to dock ${dockId}:`, err.message);
+        }
+      }
+    }
+  }
+  
+  if (dbChanged) {
+    saveGroupDb(db);
+  }
+}
+
   server.listen(config.port, "0.0.0.0", () => {
     logger.info("server_started", { port: config.port });
     initDbPromise.then(() => {
@@ -3002,6 +3273,7 @@ if (require.main === module) {
       loadReminders();
       setInterval(checkAndSendReminders, 20000);
       setInterval(sendDailyDigests, 60000);
+      setInterval(checkSlowmodeSchedules, 60000);
 
       if (process.env.LOCAL_ONLY === "true") {
         console.log("[LocalMode] LOCAL_ONLY=true — Aero auto-connect SKIPPED. Running in local sandbox mode only.");
@@ -3408,6 +3680,9 @@ I will automatically log it as a task and keep you updated! 😊`;
         };
       }
       saveGroupDb(db);
+      if (textToProcess) {
+        await processAfkInteractions(db, webhookDockId, senderId, senderName, textToProcess);
+      }
     }
     
     let isSenderAdmin = false;
@@ -3625,6 +3900,45 @@ I will automatically log it as a task and keep you updated! 😊`;
             })();
             reply = null;
           }
+        } else if (cmdName === "catchup" || cmdName === "recap") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleCatchupCommand(webhookDockId);
+        } else if (cmdName === "referee" || cmdName === "debate") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleRefereeCommand(webhookDockId);
+        } else if (cmdName === "makememe") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleMakeMemeCommand(webhookDockId, argsText, groupSettings);
+        } else if (cmdName === "vibe") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleVibeCommand(webhookDockId);
+        } else if (cmdName === "roast") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleRoastCommand(webhookDockId, argsText, groupSettings);
+        } else if (cmdName === "praise") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handlePraiseCommand(webhookDockId, argsText, groupSettings);
+        } else if (cmdName === "trivia") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleTriviaCommand(webhookDockId, senderId, text);
+        } else if (cmdName === "ans") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleAnsCommand(webhookDockId, senderId, senderName, argsText);
+        } else if (cmdName === "wordchain") {
+          if (groupSettings.botDisabled) return;
+          reply = null;
+          handleWordChainCommand(webhookDockId, senderId, text);
+        } else if (cmdName === "afk") {
+          reply = null;
+          handleAfkCommand(webhookDockId, senderId, senderName, argsText, groupSettings);
         } else if (cmdName === "meme") {
           if (groupSettings.botDisabled) {
             console.log(`[BotControl] Bot is disabled for dock ${webhookDockId}. Skipping webhook meme command.`);
@@ -4165,7 +4479,20 @@ module.exports = {
   checkAndSendReminders,
   sendDailyDigests,
   loadChatsCacheIfNeeded,
-  globalAbusiveRegex
+  globalAbusiveRegex,
+  handleCatchupCommand,
+  handleRefereeCommand,
+  handleMakeMemeCommand,
+  handleVibeCommand,
+  handleRoastCommand,
+  handlePraiseCommand,
+  handleTriviaCommand,
+  handleAnsCommand,
+  handleWordChainCommand,
+  handleAfkCommand,
+  processAfkInteractions,
+  checkIsAdmin,
+  activeGames
 };
 
 function normalizeGroupTargets(groupIds) {
@@ -5043,6 +5370,415 @@ Do not include markdown code block formatting in your response. Return raw JSON 
   } catch (err) {
     console.error("[Remind Command Error]:", err.message);
     return `❌ Reminder set karne me error aaya: ${err.message}`;
+  }
+}
+
+// ============================================================================
+// ADVANCED GROUP CONVERSATIONAL HELPERS
+// ============================================================================
+
+const catchupCache = new Map();
+
+async function handleCatchupCommand(dockId) {
+  const lastTime = catchupCache.get(dockId) || 0;
+  if (Date.now() - lastTime < 5 * 60 * 1000) {
+    await aero.sendMessage(dockId, "⏳ **[Recap Alert]:** Catch-up summaries can only be generated once every 5 minutes to prevent API overload. Please try again in a bit.");
+    return;
+  }
+  
+  try {
+    const msgs = await aero.getMessages(dockId, 50);
+    if (!msgs || msgs.length === 0) {
+      await aero.sendMessage(dockId, "📭 Group me summary generate karne ke liye chat volume bohot low hai.");
+      return;
+    }
+    
+    const sorted = msgs.reverse();
+    const transcript = sorted.map(m => {
+      const sName = m.sender?.username || m.sender?.displayName || m.senderName || "user";
+      return `[${sName}]: ${m.text}`;
+    }).join("\n");
+    
+    const { providers } = require("./providers");
+    const systemPrompt = `You are a helpful group chat assistant. 
+Summarize the following group chat log into a friendly, humorous, and concise Hinglish recap list of 3-5 bullet points.
+Highlight key topics discussed, music requested, decisions made, or warnings issued. 
+Output ONLY the recap points in markdown. Do not include any intro or outro.`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Chat History:\n${transcript}` }
+    ];
+    
+    const completion = await providers.chatCompletion(messages, { model: "default" });
+    const summary = completion.choices[0]?.message?.content || "Recap empty.";
+    
+    catchupCache.set(dockId, Date.now());
+    await aero.sendMessage(dockId, `📋 **[Group Chat Catch-up Recap]:**\n\n${summary}`);
+  } catch (err) {
+    console.error("[RecapCommand] Failed to generate catchup recap:", err.message);
+    await aero.sendMessage(dockId, "❌ Recap generate karne me koi error aagya.");
+  }
+}
+
+async function handleRefereeCommand(dockId) {
+  try {
+    const msgs = await aero.getMessages(dockId, 25);
+    if (!msgs || msgs.length < 5) {
+      await aero.sendMessage(dockId, "💬 Abhi debate judge karne ke liye chat history bohot kam hai.");
+      return;
+    }
+    
+    const sorted = msgs.reverse();
+    const transcript = sorted.map(m => {
+      const sName = m.sender?.username || m.sender?.displayName || m.senderName || "user";
+      return `[${sName}]: ${m.text}`;
+    }).join("\n");
+    
+    const { providers } = require("./providers");
+    const systemPrompt = `You are an unbiased, humorous AI Debate Referee. 
+Analyze the provided chat transcript to see if there is an argument or debate. 
+Summarize the conflicting points, roast the people debating in a funny, lighthearted Hinglish way, and provide a clear, factual, and logical verdict to settle the debate.
+Do not take sides, but be extremely witty and settle it once and for all. Keep it under 200 words.`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Debate Logs:\n${transcript}` }
+    ];
+    
+    const completion = await providers.chatCompletion(messages, { model: "default" });
+    const verdict = completion.choices[0]?.message?.content || "No debate found.";
+    
+    await aero.sendMessage(dockId, `⚖️ **[AI Debate Referee Verdict]:**\n\n${verdict}`);
+  } catch (err) {
+    console.error("[RefereeCommand] Failed to resolve debate:", err.message);
+    await aero.sendMessage(dockId, "❌ Debate resolve karne me koi error aagya.");
+  }
+}
+
+async function handleMakeMemeCommand(dockId, argsText, groupSettings) {
+  let query = argsText.trim();
+  if (!query) {
+    await aero.sendMessage(dockId, "❌ Usage: `/makememe @username <funny topic>`\nE.g.: `/makememe @yamdut coding in sleep`");
+    return;
+  }
+
+  const match = query.match(/@(\w+)/);
+  let targetUser = "Admin";
+  if (match) {
+    targetUser = `@${match[1]}`;
+    query = query.replace(match[0], "").trim();
+  }
+
+  try {
+    const { providers } = require("./providers");
+    const systemPrompt = `You are a creative meme caption writer. Based on the user name and description, select the most matching meme template from: "drake", "kermit", "rollsafe", "two_buttons", "distracted_boyfriend", "batman_slap".
+Generate a funny, safe topText and bottomText customized to this user.
+Return ONLY a valid JSON block of this shape:
+{
+  "template": "template_name",
+  "topText": "Top caption text",
+  "bottomText": "Bottom caption text"
+}`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `User: ${targetUser}\nContext: ${query}` }
+    ];
+
+    const completion = await providers.chatCompletion(messages, { model: "default" });
+    const textRes = completion.choices[0]?.message?.content?.trim() || "";
+    
+    let parsed = { template: "drake", topText: "Admin", bottomText: query };
+    try {
+      const cleanJson = textRes.substring(textRes.indexOf("{"), textRes.lastIndexOf("}") + 1);
+      parsed = JSON.parse(cleanJson);
+    } catch (_) {}
+
+    if (!isSafeMemeText(parsed.topText) || !isSafeMemeText(parsed.bottomText)) {
+      await aero.sendMessage(dockId, "❌ Bad words ya forbidden words detected in meme text.");
+      return;
+    }
+
+    const base64Uri = await generateMemeBase64(parsed.template, parsed.topText, parsed.bottomText);
+    await aero.sendMessage(dockId, `🤖 Meme for ${targetUser}:`, base64Uri);
+  } catch (err) {
+    console.error("[MakeMemeCommand] Failed to generate custom meme:", err.message);
+    await aero.sendMessage(dockId, "❌ Custom meme generate karne me koi error aagya.");
+  }
+}
+
+const vibeCache = new Map();
+
+async function handleVibeCommand(dockId) {
+  const lastTime = vibeCache.get(dockId) || 0;
+  if (Date.now() - lastTime < 10 * 60 * 1000) {
+    await aero.sendMessage(dockId, "⏳ **[Vibe Alert]:** Mood & Vibe checks are rate-limited to once every 10 minutes to save API requests. Please wait a bit.");
+    return;
+  }
+
+  try {
+    const msgs = await aero.getMessages(dockId, 50);
+    if (!msgs || msgs.length === 0) {
+      await aero.sendMessage(dockId, "📭 Group me activity bohot low hai vibe analyze karne ke liye.");
+      return;
+    }
+
+    const transcript = msgs.reverse().map(m => {
+      const sName = m.sender?.username || m.sender?.displayName || m.senderName || "user";
+      return `[${sName}]: ${m.text}`;
+    }).join("\n");
+
+    const { providers } = require("./providers");
+    const systemPrompt = `You are a funny and wise Group Vibe Analyzer. 
+Based on the chat history, output:
+1. VIBE SCORE breakdown (e.g. Chill, Chaotic, Boring, Toxic, Wholesome) totaling 100%.
+2. A witty, short Hinglish summary of the current group mood.
+3. A funny advice/recommendation.
+Output in clean markdown with headers and bold text. Keep it brief.`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Group Chat History:\n${transcript}` }
+    ];
+
+    const completion = await providers.chatCompletion(messages, { model: "default" });
+    const result = completion.choices[0]?.message?.content || "Vibe check empty.";
+
+    vibeCache.set(dockId, Date.now());
+    await aero.sendMessage(dockId, `🔮 **[Group Chat Vibe & Mood Check]:**\n\n${result}`);
+  } catch (err) {
+    console.error("[VibeCommand] Failed to analyze vibe:", err.message);
+    await aero.sendMessage(dockId, "❌ Vibe check karne me koi error aagya.");
+  }
+}
+
+async function handleRoastCommand(dockId, argsText, groupSettings) {
+  let targetUser = argsText.trim();
+  if (!targetUser) {
+    await aero.sendMessage(dockId, "❌ Usage: `/roast @username` or `/roast username`\nE.g.: `/roast @yamdut`");
+    return;
+  }
+
+  try {
+    const { providers } = require("./providers");
+    const systemPrompt = `You are a savage, witty, and hilarious standup comedian who roasts people in Hinglish. 
+Draft a funny, context-appropriate roast for the target user. Keep it friendly but sharp, funny, and under 100 words. Avoid any vulgar/abusive words.`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Roast Target: ${targetUser}` }
+    ];
+
+    const completion = await providers.chatCompletion(messages, { model: "default" });
+    const roast = completion.choices[0]?.message?.content || "No roast generated.";
+    await aero.sendMessage(dockId, `🔥 **[Roast Alert]:**\n\n${roast}`);
+  } catch (err) {
+    console.error("[RoastCommand] Failed to generate roast:", err.message);
+  }
+}
+
+async function handlePraiseCommand(dockId, argsText, groupSettings) {
+  let targetUser = argsText.trim();
+  if (!targetUser) {
+    await aero.sendMessage(dockId, "❌ Usage: `/praise @username`\nE.g.: `/praise @kartik`");
+    return;
+  }
+
+  try {
+    const { providers } = require("./providers");
+    const systemPrompt = `You are a wholesome, poetic, and heartwarming AI. 
+Draft a beautifully crafted, slightly funny, and highly wholesome compliment/praise for the target user in Hinglish. Keep it under 100 words.`;
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `Praise Target: ${targetUser}` }
+    ];
+
+    const completion = await providers.chatCompletion(messages, { model: "default" });
+    const praise = completion.choices[0]?.message?.content || "No praise generated.";
+    await aero.sendMessage(dockId, `✨ **[Wholesome Praise]:**\n\n${praise}`);
+  } catch (err) {
+    console.error("[PraiseCommand] Failed to generate praise:", err.message);
+  }
+}
+
+
+const TRIVIA_QUESTIONS = [
+  { q: "Which programming language was originally called Oak?", a: "A", o: ["A) Java", "B) JavaScript", "C) C++", "D) Python"] },
+  { q: "What is the database used in this Aero Bot project?", a: "B", o: ["A) MongoDB", "B) Firestore & JSON File", "C) PostgreSQL", "D) Redis"] },
+  { q: "Who is the singer of the song 'Ik Vaari Aa'?", a: "C", o: ["A) Sonu Nigam", "B) Atif Aslam", "C) Arijit Singh", "D) Jubin Nautiyal"] },
+  { q: "Which protocol is used by Node.js web sockets in this bot?", a: "D", o: ["A) HTTP/2", "B) FTP", "C) SMTP", "D) WebSockets (ws/wss)"] },
+  { q: "In programming, what does DRY stand for?", a: "B", o: ["A) Do Repeat Yourself", "B) Don't Repeat Yourself", "C) Direct Run Yield", "D) Database Query Yield"] }
+];
+
+async function handleTriviaCommand(dockId, senderId, text) {
+  let game = activeGames.get(dockId);
+  if (!game || game.type !== "trivia") {
+    const qIndex = Math.floor(Math.random() * TRIVIA_QUESTIONS.length);
+    const question = TRIVIA_QUESTIONS[qIndex];
+    
+    activeGames.set(dockId, {
+      type: "trivia",
+      question,
+      answered: false,
+      timer: setTimeout(async () => {
+        const active = activeGames.get(dockId);
+        if (active && active.type === "trivia" && !active.answered) {
+          activeGames.delete(dockId);
+          await aero.sendMessage(dockId, `⌛ **Trivia Time-out!** Kisi ne sahi answer nahi diya. Correct answer was **${question.a}**.`);
+        }
+      }, 20000)
+    });
+    
+    let msg = `🧠 **[TRIVIA GAME STARTED]**\n\nAapke paas answer dene ke liye 20 seconds hain. Type \`/ans <A/B/C/D>\` to submit!\n\n**Q:** ${question.q}\n\n` + question.o.join("\n");
+    await aero.sendMessage(dockId, msg);
+  } else {
+    await aero.sendMessage(dockId, "⚠️ Ek Trivia game pehle se hi chal raha hai. Sahi option type karne ka wait karein.");
+  }
+}
+
+async function handleAnsCommand(dockId, senderId, senderName, argsText) {
+  const game = activeGames.get(dockId);
+  if (!game || game.type !== "trivia") {
+    return;
+  }
+  
+  if (game.answered) return;
+  
+  const userAns = argsText.trim().toUpperCase();
+  if (!["A", "B", "C", "D"].includes(userAns)) {
+    return;
+  }
+  
+  if (userAns === game.question.a) {
+    game.answered = true;
+    clearTimeout(game.timer);
+    activeGames.delete(dockId);
+    await aero.sendMessage(dockId, `🎉 **Correct Answer!** Congratulations @${senderName}! Aapka option **${userAns}** correct tha.`);
+  }
+}
+
+async function handleWordChainCommand(dockId, senderId, text) {
+  let game = activeGames.get(dockId);
+  if (!game || game.type !== "wordchain") {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const startLetter = alphabet[Math.floor(Math.random() * alphabet.length)];
+    activeGames.set(dockId, {
+      type: "wordchain",
+      lastLetter: startLetter,
+      usedWords: new Set(),
+      timer: setTimeout(async () => {
+        activeGames.delete(dockId);
+        await aero.sendMessage(dockId, "⌛ **Word Chain Ended!** Game time-out hogya inactive hone ke wajah se.");
+      }, 45000)
+    });
+    
+    await aero.sendMessage(dockId, `🔤 **[WORD CHAIN STARTED]**\n\nStart an English word with the letter: **"${startLetter}"**\nRules: Chain the word with the last letter of previous word. No duplicate words.`);
+    return;
+  }
+  
+  const word = text.trim().toUpperCase();
+  if (word.startsWith("/") || word.split(/\s+/).length > 1) return;
+  
+  if (!word.startsWith(game.lastLetter)) {
+    return;
+  }
+  
+  if (game.usedWords.has(word)) {
+    await aero.sendMessage(dockId, `❌ **"${word}"** already used ho chuka hai! Kisi aur word se chain karein.`);
+    return;
+  }
+  
+  clearTimeout(game.timer);
+  game.usedWords.add(word);
+  const nextLetter = word[word.length - 1];
+  game.lastLetter = nextLetter;
+  game.timer = setTimeout(async () => {
+    activeGames.delete(dockId);
+    await aero.sendMessage(dockId, "⌛ **Word Chain Ended!** Game time-out hogya inactive hone ke wajah se.");
+  }, 45000);
+  
+  await aero.sendMessage(dockId, `✅ Word accepted! Next target letter is: **"${nextLetter}"**`);
+}
+
+async function handleAfkCommand(dockId, senderId, senderName, argsText, groupSettings) {
+  const isAdmin = await checkIsAdmin(dockId, senderId);
+  if (!isAdmin) {
+    await aero.sendMessage(dockId, "❌ **[AFK Alert]:** AFK status toggle karna sirf admins aur owners ke liye allowed hai.");
+    return;
+  }
+
+  const reason = argsText.trim() || "Away";
+  if (!groupSettings.afkUsers) groupSettings.afkUsers = {};
+  
+  groupSettings.afkUsers[senderId] = {
+    username: senderName,
+    reason: reason,
+    time: Date.now(),
+    tags: []
+  };
+  
+  const db = loadGroupDb();
+  db.groups[dockId].afkUsers = groupSettings.afkUsers;
+  saveGroupDb(db);
+
+  await aero.sendMessage(dockId, `💤 **${senderName}** is now AFK: "${reason}"`);
+}
+
+async function processAfkInteractions(db, dockId, senderId, senderName, text) {
+  const groupSettings = getGroupSettings(db, dockId);
+  let dbChanged = false;
+
+  if (groupSettings.afkUsers && groupSettings.afkUsers[senderId]) {
+    const afkData = groupSettings.afkUsers[senderId];
+    delete groupSettings.afkUsers[senderId];
+    dbChanged = true;
+
+    let welcomeBack = `👋 Welcome back @${senderName}! I have cleared your AFK status.`;
+    if (afkData.tags && afkData.tags.length > 0) {
+      welcomeBack += `\n\n📋 **Missed Mentions while you were away:**\n`;
+      afkData.tags.forEach((tag, idx) => {
+        const timeStr = new Date(tag.timestamp).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: '2-digit', minute: '2-digit' });
+        welcomeBack += `${idx + 1}. [${timeStr}] **${tag.by}**: ${tag.text}\n`;
+      });
+      try {
+        const listText = afkData.tags.map(t => `[${new Date(t.timestamp).toLocaleTimeString()}] **${t.by}**: ${t.text}`).join("\n");
+        await aero.sendMessage(senderId, `📋 **Missed Mentions in ${groupSettings.groupName || 'Group'}:**\n\n` + listText);
+        welcomeBack += `\n*(I have also DMed you the complete list of mentions!)*`;
+      } catch (dmErr) {
+        // DM failed
+      }
+    }
+    await aero.sendMessage(dockId, welcomeBack);
+  }
+
+  if (groupSettings.afkUsers && Object.keys(groupSettings.afkUsers).length > 0) {
+    const lowerText = text.toLowerCase();
+    for (const [afkUserId, afkData] of Object.entries(groupSettings.afkUsers)) {
+      const cleanUsername = String(afkData.username).toLowerCase();
+      const mentionPattern = new RegExp(`@${cleanUsername}\\b|\\b${cleanUsername}\\b`, "i");
+      
+      if (mentionPattern.test(lowerText) && senderId !== afkUserId) {
+        const diffMs = Date.now() - afkData.time;
+        const durationMin = Math.round(diffMs / (60 * 1000));
+        const durationStr = durationMin > 0 ? `${durationMin} mins` : "just now";
+
+        await aero.sendMessage(dockId, `💤 **[AFK Auto-Reply]:** **${afkData.username}** is currently AFK (Reason: "${afkData.reason}") since ${durationStr}.`);
+        
+        if (!afkData.tags) afkData.tags = [];
+        afkData.tags.push({
+          by: senderName,
+          text: text.substring(0, 100) + (text.length > 100 ? "..." : ""),
+          timestamp: Date.now()
+        });
+        dbChanged = true;
+      }
+    }
+  }
+
+  if (dbChanged) {
+    saveGroupDb(db);
   }
 }
 
