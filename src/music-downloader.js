@@ -25,7 +25,7 @@ function checkSystemDependencies() {
 }
 
 /**
- * Singleton service to manage YouTube & SoundCloud Music downloads and searches.
+ * Singleton service to manage YouTube & JioSaavn Music downloads and searches.
  */
 class YtMusicService {
   static get instance() {
@@ -202,36 +202,6 @@ class YtMusicService {
     return null;
   }
 
-  async searchSoundCloudUrl(query) {
-    try {
-      const { providers } = require("./providers");
-      const searchQuery = `${query} site:soundcloud.com`;
-      console.log(`[YtMusicService] Searching for SoundCloud URL: "${searchQuery}"`);
-      const searchRes = await providers.webSearch(searchQuery);
-      if (searchRes && searchRes.results && searchRes.results.length > 0) {
-        const match = searchRes.results.find(r => {
-          if (!r.url) return false;
-          // Filter to only match SoundCloud track URLs (e.g. soundcloud.com/username/track-slug)
-          if (/\/(sets|discover|stream|you|charts|search|tags|upload|terms|pages)\//i.test(r.url)) return false;
-          // Path should have exactly two segments: /username/track-slug
-          try {
-            const parsed = new URL(r.url);
-            const pathSegments = parsed.pathname.split("/").filter(Boolean);
-            return pathSegments.length === 2;
-          } catch {
-            return false;
-          }
-        });
-        if (match) {
-          console.log(`[YtMusicService] Found matching SoundCloud URL: ${match.url}`);
-          return match.url;
-        }
-      }
-    } catch (err) {
-      console.warn(`[YtMusicService] Web search for SoundCloud URL failed:`, err.message);
-    }
-    return null;
-  }
 }
 
 /**
