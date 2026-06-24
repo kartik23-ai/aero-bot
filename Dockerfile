@@ -18,4 +18,4 @@ COPY db ./db
 COPY docs ./docs
 
 EXPOSE 7860
-CMD ["node", "src/server.js"]
+CMD ["node", "--openssl-legacy-provider", "src/server.js"]

@@ -356,7 +356,10 @@ function getGroupSettings(db, dockId) {
       aiSlowmodeSec: 0,
       messageCount: 0,
       aiRequestCount: 0,
-      digestEnabled: false
+      digestEnabled: false,
+      greetingEnabled: true,
+      greetingMessage: null,
+      configLogs: []
     };
   }
   const g = db.groups[dockId];
@@ -375,7 +378,24 @@ function getGroupSettings(db, dockId) {
   if (g.messageCount === undefined) g.messageCount = 0;
   if (g.aiRequestCount === undefined) g.aiRequestCount = 0;
   if (g.digestEnabled === undefined) g.digestEnabled = false;
+  if (g.greetingEnabled === undefined) g.greetingEnabled = true;
+  if (g.greetingMessage === undefined) g.greetingMessage = null;
+  if (g.configLogs === undefined) g.configLogs = [];
   return g;
+}
+
+function logConfigChange(db, dockId, userId, userName, changeDescription) {
+  const g = getGroupSettings(db, dockId);
+  if (!g.configLogs) g.configLogs = [];
+  g.configLogs.unshift({
+    timestamp: new Date().toISOString(),
+    user: userName || "Unknown User",
+    userId: userId || "unknown",
+    change: changeDescription
+  });
+  if (g.configLogs.length > 20) {
+    g.configLogs.pop();
+  }
 }
 
 async function checkIsAdmin(dockId, userId, forceRefresh = false) {
@@ -1308,26 +1328,36 @@ I will automatically log it as a task and keep you updated! 😊`;
 
     if (assistantMode.autoWelcome && isGroup) {
       const groupSettings = getGroupSettings(db, dockId);
-      const welcomeContext = {
-        enabled: assistantMode.enabled,
-        isGroup: true,
-        groupName: groupName
-      };
       
-      // Setup dynamic welcome message based on language setting
-      let welcomeMsg = bot.handleMemberJoin(senderObj, welcomeContext);
-      if (groupSettings.language === "hindi") {
-        welcomeMsg = `ग्रुप में आपका स्वागत है, @${senderName}! कृपया शिष्टाचार बनाए रखें और नियम (/rules) देखें।`;
-      } else if (groupSettings.language === "hinglish") {
-        welcomeMsg = `Welcome to the group, @${senderName}! Please rules aur regulations follow karein aur check karein /rules.`;
-      }
-      
-      if (welcomeMsg) {
-        try {
-          await aero.sendMessage(dockId, welcomeMsg);
-          queueAssistantReply(dockId, welcomeMsg, "welcome");
-        } catch (err) {
-          console.error("[Welcome Message Error]:", err.message);
+      if (groupSettings.greetingEnabled !== false) {
+        const welcomeContext = {
+          enabled: assistantMode.enabled,
+          isGroup: true,
+          groupName: groupName
+        };
+        
+        let welcomeMsg = "";
+        if (groupSettings.greetingMessage) {
+          welcomeMsg = groupSettings.greetingMessage
+            .replace(/{username}/gi, `@${senderName}`)
+            .replace(/{name}/gi, senderName)
+            .replace(/{groupname}/gi, groupName);
+        } else {
+          welcomeMsg = bot.handleMemberJoin(senderObj, welcomeContext);
+          if (groupSettings.language === "hindi") {
+            welcomeMsg = `ग्रुप में आपका स्वागत है, @${senderName}! कृपया शिष्टाचार बनाए रखें और नियम (/rules) देखें।`;
+          } else if (groupSettings.language === "hinglish") {
+            welcomeMsg = `Welcome to the group, @${senderName}! Please rules aur regulations follow karein aur check karein /rules.`;
+          }
+        }
+        
+        if (welcomeMsg) {
+          try {
+            await aero.sendMessage(dockId, welcomeMsg);
+            queueAssistantReply(dockId, welcomeMsg, "welcome");
+          } catch (err) {
+            console.error("[Welcome Message Error]:", err.message);
+          }
         }
       }
     }
@@ -1520,7 +1550,6 @@ I will automatically log it as a task and keep you updated! 😊`;
           } else if (gSettings.language === "hindi") {
             groupIntro = `👋 नमस्ते! मैं इस ग्रुप में शामिल हो गया हूँ। कृपया मुझे एडमिन बनाएं ताकि मैं नियम लागू कर सकूं, ग्रुप लॉक कर सकूं, स्लोमोड चालू कर सकूं और ऑटो-बैन कर सकूं। कॉन्फ़िगरेशन कमांड: /setrules, /slowmode, /lock, /abusive.`;
           } else {
-            groupIntro = `👋 Hello! Main is group me join ho gaya hoon. Please mujhe admin banao taaki main rules enforce, group lock, slowmode aur auto-ban kar sakoon. Configuration commands: /setrules, /slowmode, /lock, /abusive.`;
           }
           await aero.sendMessage(newDockId, groupIntro);
 
@@ -1551,8 +1580,190 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
       return;
     }
+    // Admin DM control and conversational guide AI
+    const isDev = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
+    await refreshDocksIfNeeded(true);
+    const adminDocks = isDev ? (aero.docks || []) : (aero.docks || []).filter(d => 
+      d.creatorId === senderId || (d.admins && d.admins.includes(senderId))
+    );
 
-    // Default conversational AI handler for whitelisted DMs (setup completed)
+    if (adminDocks.length > 0) {
+      const trimmedText = text.trim();
+      const lowerText = trimmedText.toLowerCase();
+
+      // Command 1: docks
+      if (lowerText === "/docks" || lowerText === "docks") {
+        let responseText = "📋 **Your Managed Groups (Docks):**\n\n";
+        for (const d of adminDocks) {
+          const gSettings = getGroupSettings(db, d.id);
+          const gEnabled = gSettings.greetingEnabled !== false ? "✅ ON" : "❌ OFF";
+          const gMsg = gSettings.greetingMessage || "_Default Welcome Message_";
+          responseText += `• **Name:** ${d.name}\n  **ID:** \`${d.id}\`\n  **Greeting Status:** ${gEnabled}\n  **Greeting Msg:** "${gMsg}"\n\n`;
+        }
+        responseText += `💡 *Tip:* Kisi group ki greeting status change karne ke liye \`/greeting <name_or_id> <on/off>\` use karein ya message change karne ke liye \`/setgreeting <name_or_id> <message>\` use karein.`;
+        await aero.sendMessage(dockId, responseText);
+        return;
+      }
+
+      // Command 2: greeting
+      if (lowerText.startsWith("/greeting ") || lowerText.startsWith("greeting ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        const status = parts[2]?.toLowerCase();
+        
+        if (!targetQuery || !["on", "off", "enable", "disable"].includes(status)) {
+          await aero.sendMessage(dockId, "❌ Usage: `/greeting <group_name_or_id> <on/off>`\nE.g.: `/greeting awara off`");
+          return;
+        }
+        
+        const targetDock = adminDocks.find(d => 
+          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+        );
+        
+        if (!targetDock) {
+          await aero.sendMessage(dockId, `❌ Match nahi mila. Please \`/docks\` command use karke sahi name/ID check karein.`);
+          return;
+        }
+        
+        const gSettings = getGroupSettings(db, targetDock.id);
+        const isON = ["on", "enable"].includes(status);
+        gSettings.greetingEnabled = isON;
+        saveGroupDb(db);
+        logConfigChange(db, targetDock.id, senderId, senderName, `Greeting message turned ${isON ? 'ON' : 'OFF'}`);
+        
+        await aero.sendMessage(dockId, `✅ Greeting message for **${targetDock.name}** has been turned ${isON ? "ON" : "OFF"}.`);
+        return;
+      }
+
+      // Command 3: setgreeting
+      if (lowerText.startsWith("/setgreeting ") || lowerText.startsWith("setgreeting ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        if (!targetQuery) {
+          await aero.sendMessage(dockId, "❌ Usage: `/setgreeting <group_name_or_id> <message>`\nE.g.: `/setgreeting awara Hello {name}, welcome to {groupname}!`");
+          return;
+        }
+        const targetDock = adminDocks.find(d => 
+          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+        );
+        
+        if (!targetDock) {
+          await aero.sendMessage(dockId, `❌ Match nahi mila. Please \`/docks\` command use karke sahi name/ID check karein.`);
+          return;
+        }
+
+        const newGreeting = trimmedText.substring(trimmedText.indexOf(targetQuery) + targetQuery.length).trim();
+        if (!newGreeting) {
+          await aero.sendMessage(dockId, "❌ Please specify a welcome message.");
+          return;
+        }
+        
+        const gSettings = getGroupSettings(db, targetDock.id);
+        gSettings.greetingMessage = newGreeting;
+        saveGroupDb(db);
+        logConfigChange(db, targetDock.id, senderId, senderName, `Greeting message updated to: "${newGreeting}"`);
+        
+        await aero.sendMessage(dockId, `✅ Greeting message for **${targetDock.name}** updated to:\n"${newGreeting}"`);
+        return;
+      }
+
+      // Command 4: logs
+      if (lowerText.startsWith("/logs ") || lowerText.startsWith("logs ")) {
+        const parts = trimmedText.split(/\s+/);
+        const targetQuery = parts[1];
+        
+        if (!targetQuery) {
+          await aero.sendMessage(dockId, "❌ Usage: `/logs <group_name_or_id>`\nE.g.: `/logs awara`");
+          return;
+        }
+        
+        const targetDock = adminDocks.find(d => 
+          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+        );
+        
+        if (!targetDock) {
+          await aero.sendMessage(dockId, `❌ Match nahi mila. Please \`/docks\` command use karke sahi name/ID check karein.`);
+          return;
+        }
+        
+        const gSettings = getGroupSettings(db, targetDock.id);
+        const logList = gSettings.configLogs || [];
+        
+        if (logList.length === 0) {
+          await aero.sendMessage(dockId, `📋 No settings change logs found for **${targetDock.name}**.`);
+          return;
+        }
+        
+        let logMsg = `📋 **Recent 10 Configuration Logs for ${targetDock.name}:**\n\n`;
+        const displayLogs = logList.slice(0, 10);
+        displayLogs.forEach((l, idx) => {
+          const timeStr = new Date(l.timestamp).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+          logMsg += `${idx + 1}. [${timeStr}] **${l.user}**: ${l.change}\n`;
+        });
+        
+        await aero.sendMessage(dockId, logMsg);
+        return;
+      }
+
+      // Text-Only conversational Guide AI (stateless or single-turn helper)
+      if (text) {
+        try {
+          const { providers } = require("./providers");
+          
+          let dockListText = "";
+          adminDocks.forEach(d => {
+            const gSettings = getGroupSettings(db, d.id);
+            dockListText += `- Name: "${d.name}", ID: "${d.id}", Greeting Status: ${gSettings.greetingEnabled !== false ? "ON" : "OFF"}, Custom Greeting: "${gSettings.greetingMessage || "none"}"\n`;
+          });
+
+          const systemPrompt = `You are AeroGroupGuard Admin Assistant, a text-only AI designed to guide group admins in Direct Messages.
+You help admins manage their groups by explaining how to use the available DM commands.
+
+The user is an admin/owner of the following groups (docks):
+${dockListText}
+
+Available DM Commands:
+1. /docks - Lists all groups you manage, their IDs, and current greeting settings.
+2. /greeting <group_name_or_id> <on/off> - Turn the welcome greeting message ON or OFF for a group.
+3. /setgreeting <group_name_or_id> <message> - Set a custom greeting message. You can use placeholders: {username} (adds @username), {name} (display name), and {groupname} (group name).
+4. /logs <group_name_or_id> - View the last 10 configuration changes made to the group.
+
+Your instructions:
+- Respond in Hinglish.
+- Be helpful, concise, and friendly.
+- If the user wants to make a change, identify the matching group from their list (e.g., if they say "awara", map it to "Awara Group" / "6a098ac946dc268297b10e39").
+- Do NOT execute commands. Instead, tell the user the exact command they should type (e.g. \`/setgreeting awara Welcome to {name}!\`) to make that change.
+- Keep the conversation strictly focused on assisting them with these commands. Do not generate images, memes, or play music.`;
+
+          const messages = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: text }
+          ];
+
+          const completion = await providers.chatCompletion(messages, {
+            model: "default",
+            max_tokens: 300,
+            temperature: 0.7
+          });
+
+          const replyText = completion.choices[0].message.content || "";
+          await aero.sendMessage(dockId, replyText);
+
+          // Track DM AI requests
+          const dmSettings = getGroupSettings(db, dockId);
+          dmSettings.aiRequestCount = (dmSettings.aiRequestCount || 0) + 1;
+          const aiSlowKey = `ai:${dockId}:${senderId}`;
+          lastAiReplyTime.set(aiSlowKey, Date.now());
+          saveGroupDb(db);
+        } catch (err) {
+          console.error("[Admin DM AI Error]:", err.message);
+          await aero.sendMessage(dockId, "Arey yaar, thoda connection issue lag raha hai. Kya aap dobara likh sakte hain?");
+        }
+        return;
+      }
+    }
+
+    // Default conversational AI handler for whitelisted DMs (non-admins)
     const parsedCmd = bot.parseCommand(text);
     if (parsedCmd && ["setrules", "rules", "slowmode", "lock", "unlock", "abusive", "toggleadmin", "warn", "clearwarns"].includes(parsedCmd.name)) {
       await aero.sendMessage(dockId, `❌ Aap ab group settings DM me change nahi kar sakte. Group settings ko group chat me commands use karke hi edit kiya ja sakta hai.`);
@@ -2013,6 +2224,7 @@ I will automatically log it as a task and keep you updated! 😊`;
               } else {
                 groupSettings.rules = argsText;
                 saveGroupDb(db);
+                logConfigChange(db, dockId, senderId, senderName, `Rules set to: ${argsText.substring(0, 50)}${argsText.length > 50 ? "..." : ""}`);
                 reply = "✅ Rules updated for this group.";
               }
               break;
@@ -2024,6 +2236,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                 if (val === "off" || val === "disable" || val === "0") {
                   groupSettings.slowmodeSeconds = 0;
                   saveGroupDb(db);
+                  logConfigChange(db, dockId, senderId, senderName, "Slowmode disabled");
                   try {
                     await aero.updateDockSettings(dockId, { slowMode: 0 });
                     reply = "⏳ Slowmode disabled for this group on the server.";
@@ -2037,6 +2250,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                   } else {
                     groupSettings.slowmodeSeconds = secs;
                     saveGroupDb(db);
+                    logConfigChange(db, dockId, senderId, senderName, `Slowmode set to ${secs}s`);
                     try {
                       await aero.updateDockSettings(dockId, { slowMode: secs });
                       reply = `⏳ Slowmode set to ${secs} seconds for this group on the server.`;
@@ -2051,6 +2265,7 @@ I will automatically log it as a task and keep you updated! 😊`;
             case "slowmode5":
               groupSettings.slowmodeSeconds = 5;
               saveGroupDb(db);
+              logConfigChange(db, dockId, senderId, senderName, "Slowmode set to 5s");
               try {
                 await aero.updateDockSettings(dockId, { slowMode: 5 });
                 reply = "⏳ Slowmode set to 5 seconds for this group on the server.";
@@ -2062,6 +2277,7 @@ I will automatically log it as a task and keep you updated! 😊`;
             case "slowmode10":
               groupSettings.slowmodeSeconds = 10;
               saveGroupDb(db);
+              logConfigChange(db, dockId, senderId, senderName, "Slowmode set to 10s");
               try {
                 await aero.updateDockSettings(dockId, { slowMode: 10 });
                 reply = "⏳ Slowmode set to 10 seconds for this group on the server.";
@@ -2075,6 +2291,7 @@ I will automatically log it as a task and keep you updated! 😊`;
             case "slowmode0":
               groupSettings.slowmodeSeconds = 0;
               saveGroupDb(db);
+              logConfigChange(db, dockId, senderId, senderName, "Slowmode disabled");
               try {
                 await aero.updateDockSettings(dockId, { slowMode: 0 });
                 reply = "⏳ Slowmode disabled for this group on the server.";
@@ -2091,6 +2308,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                 if (val === "off" || val === "disable" || val === "0") {
                   groupSettings.aiSlowmodeSec = 0;
                   saveGroupDb(db);
+                  logConfigChange(db, dockId, senderId, senderName, "AI chatbot slowmode disabled");
                   reply = "⏳ AI chatbot slowmode disabled for this group.";
                 } else {
                   const secs = parseInt(val, 10);
@@ -2099,6 +2317,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                   } else {
                     groupSettings.aiSlowmodeSec = secs;
                     saveGroupDb(db);
+                    logConfigChange(db, dockId, senderId, senderName, `AI chatbot slowmode set to ${secs}s`);
                     reply = `⏳ AI chatbot slowmode set to ${secs} seconds for this group.`;
                   }
                 }
@@ -2108,12 +2327,14 @@ I will automatically log it as a task and keep you updated! 😊`;
             case "lockgroup":
               groupSettings.locked = true;
               saveGroupDb(db);
+              logConfigChange(db, dockId, senderId, senderName, "Group locked");
               reply = "🔒 Group has been locked by admin. Messages are monitored.";
               break;
             case "unlock":
             case "unlockgroup":
               groupSettings.locked = false;
               saveGroupDb(db);
+              logConfigChange(db, dockId, senderId, senderName, "Group unlocked");
               reply = "🔓 Group has been unlocked. You can now chat freely.";
               break;
             case "abusive":
@@ -2124,10 +2345,12 @@ I will automatically log it as a task and keep you updated! 😊`;
                 if (val === "on" || val === "enable" || val === "true") {
                   groupSettings.abusiveFilter = true;
                   saveGroupDb(db);
+                  logConfigChange(db, dockId, senderId, senderName, "Abusive filter enabled");
                   reply = "✅ Abusive language filter enabled for this group.";
                 } else if (val === "off" || val === "disable" || val === "false") {
                   groupSettings.abusiveFilter = false;
                   saveGroupDb(db);
+                  logConfigChange(db, dockId, senderId, senderName, "Abusive filter disabled");
                   reply = "❌ Abusive language filter disabled for this group.";
                 } else {
                   reply = "Use /abusive on or /abusive off.";
@@ -2150,7 +2373,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                     db.docks = JSON.parse(JSON.stringify(aero.docks));
                     saveGroupDb(db);
                   }
-                  
+                  logConfigChange(db, dockId, senderId, senderName, `Group renamed to: "${argsText}"`);
                   reply = `✅ Dock has been successfully renamed to "${argsText}".`;
                 } catch (err) {
                   reply = `❌ Failed to rename dock on Aero server: ${err.message}`;
@@ -2163,6 +2386,7 @@ I will automatically log it as a task and keep you updated! 😊`;
               } else {
                 groupSettings.faq = argsText;
                 saveGroupDb(db);
+                logConfigChange(db, dockId, senderId, senderName, "FAQ updated");
                 reply = "✅ FAQ updated for this group.";
               }
               break;
@@ -2307,25 +2531,13 @@ I will automatically log it as a task and keep you updated! 😊`;
             await aero.sendMessage(dockId, `🎵 *Searching:* "${songName}"...`);
             const { downloadYoutubeAudio } = require("./music-downloader");
             const audioData = await downloadYoutubeAudio(songName);
-            if (audioData.isDirectUrl) {
-              // JioSaavn CDN URL — pass directly, no base64 (avoids 413 Payload Too Large)
-              console.log(`[PlayCommand] Sending JioSaavn CDN URL directly for: ${audioData.filename}`);
-              await aero.sendMessage(dockId, "", null, null, null, {
-                url: audioData.uri,
-                fileName: audioData.filename,
-                type: "document",
-                mimeType: "audio/mp3"
-              });
-            } else {
-              // Base64 fallback (YouTube yt-dlp download)
-              console.log(`[PlayCommand] Sending base64 audio for: ${audioData.filename}`);
-              await aero.sendMessage(dockId, "", null, null, null, {
-                url: audioData.uri,
-                fileName: audioData.filename,
-                type: "document",
-                mimeType: "audio/mp3"
-              });
-            }
+            console.log(`[PlayCommand] Sending audio: ${audioData.filename}`);
+            await aero.sendMessage(dockId, "", null, null, null, {
+              url: audioData.uri,
+              fileName: audioData.filename,
+              type: "document",
+              mimeType: "audio/mp3"
+            });
           } catch (err) {
             console.error("[PlayCommand] Error processing music:", err.message);
             await aero.sendMessage(dockId, `❌ Song nahi mila: ${err.message}`);
@@ -3446,25 +3658,13 @@ I will automatically log it as a task and keep you updated! 😊`;
                 await aero.sendMessage(webhookDockId, `🎵 *Searching:* "${songName}"...`);
                 const { downloadYoutubeAudio } = require("./music-downloader");
                 const audioData = await downloadYoutubeAudio(songName);
-                if (audioData.isDirectUrl) {
-                  // JioSaavn CDN URL — pass directly, no base64 (avoids 413 Payload Too Large)
-                  console.log(`[WebhookPlayCommand] Sending JioSaavn CDN URL directly for: ${audioData.filename}`);
-                  await aero.sendMessage(webhookDockId, "", null, null, null, {
-                    url: audioData.uri,
-                    fileName: audioData.filename,
-                    type: "document",
-                    mimeType: "audio/mp3"
-                  });
-                } else {
-                  // Base64 fallback (YouTube yt-dlp download)
-                  console.log(`[WebhookPlayCommand] Sending base64 audio for: ${audioData.filename}`);
-                  await aero.sendMessage(webhookDockId, "", null, null, null, {
-                    url: audioData.uri,
-                    fileName: audioData.filename,
-                    type: "document",
-                    mimeType: "audio/mp3"
-                  });
-                }
+                console.log(`[WebhookPlayCommand] Sending audio: ${audioData.filename}`);
+                await aero.sendMessage(webhookDockId, "", null, null, null, {
+                  url: audioData.uri,
+                  fileName: audioData.filename,
+                  type: "document",
+                  mimeType: "audio/mp3"
+                });
               } catch (err) {
                 console.error("[WebhookPlayCommand] Error processing music:", err.message);
                 await aero.sendMessage(webhookDockId, `❌ Song nahi mila: ${err.message}`);

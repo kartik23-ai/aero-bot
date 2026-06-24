@@ -4,7 +4,7 @@
   "description": "Production-ready Aero Messenger group management and AI assistant bot scaffold.",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node --openssl-legacy-provider src/server.js",
     "test": "node --test"
   },
   "keywords": [

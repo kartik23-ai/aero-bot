@@ -1,31 +1,43 @@
 "use strict";
 
-const { exec } = require("node:child_process");
+const { exec, execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const crypto = require("node:crypto");
 const axios = require("axios");
 
-// 1-second silent MP3 base64 fallback for local development without yt-dlp/ffmpeg
+// 1-second silent MP3 base64 fallback for local development without ffmpeg
 const MOCK_SILENT_MP3 = "data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//sQxAAs8AAA0gAAAAAANVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV";
 
 /**
- * Checks if yt-dlp and ffmpeg are available on the system.
+ * Checks if ffmpeg is available on the system.
  */
-function checkSystemDependencies() {
+function checkFfmpeg() {
   return new Promise((resolve) => {
-    exec("yt-dlp --version", (err1) => {
-      if (err1) return resolve(false);
-      exec("ffmpeg -version", (err2) => {
-        if (err2) return resolve(false);
-        resolve(true);
-      });
-    });
+    const bin = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+    execFile(bin, ["-version"], (err) => resolve(!err));
   });
 }
 
 /**
- * Singleton service to manage YouTube & JioSaavn Music downloads and searches.
+ * Decrypts JioSaavn's encrypted media URL using DES-ECB and the static key.
+ */
+function decryptUrl(encryptedUrl) {
+  try {
+    const key = Buffer.from("38346591", "utf8");
+    const decipher = crypto.createDecipheriv("des-ecb", key, null);
+    let decrypted = decipher.update(encryptedUrl, "base64", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted.trim();
+  } catch (err) {
+    console.error(`[YtMusicService] Decryption failed: ${err.message}. Ensure --openssl-legacy-provider flag is set.`);
+    return null;
+  }
+}
+
+/**
+ * Singleton service to manage JioSaavn Music downloads.
  */
 class YtMusicService {
   static get instance() {
@@ -51,20 +63,20 @@ class YtMusicService {
         const song = results[0];
         const encryptedUrl = song.more_info?.encrypted_media_url;
         if (encryptedUrl) {
-          const authUrl = `https://www.jiosaavn.com/api.php?__call=song.generateAuthToken&url=${encodeURIComponent(encryptedUrl)}&bitrate=320&api_version=4&_format=json&ctx=web6dot0`;
-          const authRes = await axios.get(authUrl, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "application/json"
-            },
-            timeout: 10000
-          });
-          const downloadUrl = authRes.data.auth_url;
-          if (downloadUrl) {
+          const decryptedUrl = decryptUrl(encryptedUrl);
+          if (decryptedUrl) {
             const title = song.title || song.song || query;
             const artist = song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || "";
-            console.log(`[YtMusicService] Found JioSaavn CDN URL for: "${title}" by "${artist}"`);
-            return { url: downloadUrl, title, artist };
+            console.log(`[YtMusicService] Found JioSaavn direct CDN URL for: "${title}" by "${artist}"`);
+            
+            // Default to 160kbps high quality source if available
+            let finalUrl = decryptedUrl;
+            if (finalUrl.includes("_96.mp4")) {
+              finalUrl = finalUrl.replace("_96.mp4", "_160.mp4");
+            } else if (finalUrl.includes("_48.mp4")) {
+              finalUrl = finalUrl.replace("_48.mp4", "_160.mp4");
+            }
+            return { url: finalUrl, title, artist };
           }
         }
       }
@@ -74,8 +86,69 @@ class YtMusicService {
     return null;
   }
 
+  /**
+   * Downloads JioSaavn CDN URL via Axios stream and compresses to 96kbps MP3 via ffmpeg.
+   */
+  async _downloadAndCompress(cdnUrl, filename) {
+    const tempDir = os.tmpdir();
+    const fileId = "saavn-" + Math.random().toString(36).substring(2, 10);
+    const rawFile = path.join(tempDir, `${fileId}_raw.mp4`);
+    const mp3File = path.join(tempDir, `${fileId}.mp3`);
+
+    try {
+      // Step 1: Download direct URL via Axios Stream
+      console.log(`[YtMusicService] Downloading JioSaavn direct CDN via Axios...`);
+      await new Promise((resolve, reject) => {
+        axios.get(cdnUrl, {
+          responseType: "stream",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          }
+        }).then(res => {
+          const writer = fs.createWriteStream(rawFile);
+          res.data.pipe(writer);
+          writer.on("finish", () => {
+            if (!fs.existsSync(rawFile) || fs.statSync(rawFile).size < 1000) {
+              return reject(new Error("Axios downloaded empty/too-small file"));
+            }
+            console.log(`[YtMusicService] Axios download done: ${fs.statSync(rawFile).size} bytes`);
+            resolve();
+          });
+          writer.on("error", (writeErr) => reject(writeErr));
+        }).catch(err => {
+          reject(new Error(`Axios CDN download failed: ${err.message}`));
+        });
+      });
+
+      // Step 2: Re-encode to 96kbps MP3 via ffmpeg (reduces size to stay under 8MB payload limit)
+      console.log(`[YtMusicService] Compressing to 96kbps MP3 via ffmpeg...`);
+      await new Promise((resolve, reject) => {
+        const ffmpegBin = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+        execFile(ffmpegBin, ["-y", "-i", rawFile, "-vn", "-ar", "44100", "-ac", "2", "-b:a", "96k", mp3File], { timeout: 60000 }, (err, stdout, stderr) => {
+          if (err) return reject(new Error(`ffmpeg compression failed: ${err.message}`));
+          if (!fs.existsSync(mp3File) || fs.statSync(mp3File).size < 1000) {
+            return reject(new Error(`ffmpeg output file missing or too small`));
+          }
+          const sizeMB = (fs.statSync(mp3File).size / (1024 * 1024)).toFixed(2);
+          console.log(`[YtMusicService] ffmpeg done: ${sizeMB}MB MP3 ready`);
+          resolve();
+        });
+      });
+
+      // Step 3: Read and convert to base64
+      const fileBuffer = fs.readFileSync(mp3File);
+      const base64Data = fileBuffer.toString("base64");
+      console.log(`[YtMusicService] ✅ JioSaavn download+compress succeeded! Base64 length: ${base64Data.length}`);
+      return `data:audio/mp3;base64,${base64Data}`;
+
+    } finally {
+      // Cleanup temp files
+      try { if (fs.existsSync(rawFile)) fs.unlinkSync(rawFile); } catch (_) {}
+      try { if (fs.existsSync(mp3File)) fs.unlinkSync(mp3File); } catch (_) {}
+    }
+  }
+
   async downloadAudio(query) {
-    // Enhance query accuracy if it is a simple song name without standard music suffixes
     let enhancedQuery = query.trim();
     if (!/(song|music|audio|video|lyrics|mp3|official|remix|dlp|cover)/i.test(enhancedQuery)) {
       enhancedQuery = `${enhancedQuery} song`;
@@ -84,40 +157,47 @@ class YtMusicService {
 
     let resolvedFilename = `${query.trim()}.mp3`;
 
-    // ── STEP 1: Try JioSaavn — return CDN URL directly (no download, no base64!) ──
+    // ── STEP 1: JioSaavn CDN → Axios download → ffmpeg compress → base64 ──
     const saavnData = await this.searchJioSaavnUrl(query);
     if (saavnData) {
-      resolvedFilename = `${saavnData.title} - ${saavnData.artist}.mp3`.replace(/[^a-zA-Z0-9_\-\s\.]/g, "").trim();
-      console.log(`[YtMusicService] ✅ JioSaavn CDN URL ready — sending directly, no download needed!`);
-      // Return the CDN URL directly — server.js will pass it in attachment.url
-      return {
-        uri: saavnData.url,  // Direct CDN URL (not base64)
-        filename: resolvedFilename,
-        isDirectUrl: true     // Flag to tell server.js this is a URL not base64
-      };
+      resolvedFilename = `${saavnData.title} - ${saavnData.artist}.mp3`
+        .replace(/[^a-zA-Z0-9_\-\s\.]/g, "").trim();
+
+      const hasFfmpeg = await checkFfmpeg();
+
+      if (hasFfmpeg) {
+        try {
+          const audioUri = await this._downloadAndCompress(saavnData.url, resolvedFilename);
+          return { uri: audioUri, filename: resolvedFilename, isDirectUrl: false };
+        } catch (err) {
+          console.warn(`[YtMusicService] JioSaavn direct download failed: ${err.message}`);
+        }
+      } else {
+        console.warn(`[YtMusicService] ffmpeg not available, skipping JioSaavn download`);
+      }
     }
 
-    // ── STEP 2: Try yt-dlp for YouTube (if available) ──
-    const isAvailable = await checkSystemDependencies();
-    if (!isAvailable) {
-      console.warn("[YtMusicService] yt-dlp/ffmpeg not available. Returning silent fallback.");
+    // ── STEP 2: yt-dlp YouTube fallback ──
+    const hasYtDlp = await new Promise((resolve) => {
+      const bin = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+      execFile(bin, ["--version"], (err) => resolve(!err));
+    });
+
+    if (!hasYtDlp) {
+      console.warn("[YtMusicService] yt-dlp also not available. Returning silent fallback.");
       return { uri: MOCK_SILENT_MP3, filename: "silent.mp3", isDirectUrl: false };
     }
 
-    // Try YouTube direct URL first, then search
     const ytUrl = await this.searchYoutubeUrl(enhancedQuery);
     const ytTargets = [];
-    if (ytUrl) {
-      ytTargets.push({ url: ytUrl, name: "YouTube Direct URL" });
-    }
+    if (ytUrl) ytTargets.push({ url: ytUrl, name: "YouTube Direct URL" });
     ytTargets.push({ url: `ytsearch1:${enhancedQuery}`, name: "YouTube Search Query" });
 
     for (const target of ytTargets) {
       try {
-        console.log(`[YtMusicService] Attempting yt-dlp download: ${target.name}: "${target.url}"`);
+        console.log(`[YtMusicService] Trying yt-dlp: ${target.name}`);
         const audioUri = await this._executeYtDlp(target.url);
         if (audioUri) {
-          console.log(`[YtMusicService] ✅ yt-dlp download succeeded: ${target.name}`);
           return { uri: audioUri, filename: resolvedFilename, isDirectUrl: false };
         }
       } catch (err) {
@@ -125,7 +205,7 @@ class YtMusicService {
       }
     }
 
-    throw new Error("All download sources (JioSaavn + YouTube yt-dlp) failed.");
+    throw new Error("All download sources failed.");
   }
 
   _executeYtDlp(target) {
@@ -133,50 +213,52 @@ class YtMusicService {
       const tempDir = os.tmpdir();
       const tempFileId = "yt-" + Math.random().toString(36).substring(2, 10);
       const outputPathPattern = path.join(tempDir, `${tempFileId}.%(ext)s`);
-      
-      const cmd = `yt-dlp --no-check-certificates --impersonate chrome --retries 0 --fragment-retries 0 --socket-timeout 8 --extract-audio --audio-format mp3 --audio-quality 0 --max-filesize 15M -o "${outputPathPattern}" "${target}"`;
-      console.log(`[YtMusicService] Executing: ${cmd}`);
 
-      exec(cmd, { timeout: 60000 }, (error, stdout, stderr) => {
+      const bin = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+      const args = [
+        "--no-check-certificates",
+        "--impersonate", "chrome",
+        "--retries", "0",
+        "--fragment-retries", "0",
+        "--socket-timeout", "8",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "5",
+        "--max-filesize", "8M",
+        "-o", outputPathPattern,
+        target
+      ];
+
+      console.log(`[YtMusicService] Executing yt-dlp: ${bin} ${args.join(" ")}`);
+
+      execFile(bin, args, { timeout: 60000 }, (error, stdout, stderr) => {
         if (error) {
-          console.error("[YtMusicService] Exec error:", error.message);
-          return reject(new Error("Failed to download audio: " + error.message));
+          return reject(new Error("yt-dlp failed: " + error.message));
         }
-
         const expectedFilePath = path.join(tempDir, `${tempFileId}.mp3`);
         if (fs.existsSync(expectedFilePath)) {
           try {
-            console.log(`[YtMusicService] Successfully downloaded: ${expectedFilePath}`);
             const fileBuffer = fs.readFileSync(expectedFilePath);
-            const base64Data = fileBuffer.toString("base64");
-            const audioUri = `data:audio/mp3;base64,${base64Data}`;
-            
-            fs.unlink(expectedFilePath, (unlinkErr) => {
-              if (unlinkErr) console.error("[YtMusicService] Failed to delete temp file:", unlinkErr.message);
-            });
-
+            const audioUri = `data:audio/mp3;base64,${fileBuffer.toString("base64")}`;
+            fs.unlink(expectedFilePath, () => {});
             resolve(audioUri);
           } catch (readErr) {
-            reject(new Error("Failed to read converted audio file: " + readErr.message));
+            reject(new Error("Failed to read yt-dlp output: " + readErr.message));
           }
         } else {
-          // Fallback search in directory
-          fs.readdir(tempDir, (readDirErr, files) => {
-            if (readDirErr) return reject(new Error("MP3 output file not found."));
+          fs.readdir(tempDir, (err2, files) => {
+            if (err2) return reject(new Error("MP3 output not found."));
             const match = files.find(f => f.startsWith(tempFileId) && f.endsWith(".mp3"));
             if (match) {
               const matchPath = path.join(tempDir, match);
               try {
                 const fileBuffer = fs.readFileSync(matchPath);
-                const base64Data = fileBuffer.toString("base64");
-                const audioUri = `data:audio/mp3;base64,${base64Data}`;
+                const audioUri = `data:audio/mp3;base64,${fileBuffer.toString("base64")}`;
                 fs.unlink(matchPath, () => {});
                 resolve(audioUri);
-              } catch (err) {
-                reject(err);
-              }
+              } catch (err) { reject(err); }
             } else {
-              reject(new Error("Audio conversion output file was not generated."));
+              reject(new Error("yt-dlp output file not generated."));
             }
           });
         }
@@ -188,25 +270,24 @@ class YtMusicService {
     try {
       const { providers } = require("./providers");
       const searchQuery = `${query} site:youtube.com/watch`;
-      console.log(`[YtMusicService] Searching for YouTube video URL: "${searchQuery}"`);
+      console.log(`[YtMusicService] Searching YouTube URL for: "${searchQuery}"`);
       const searchRes = await providers.webSearch(searchQuery);
       if (searchRes && searchRes.results && searchRes.results.length > 0) {
         const match = searchRes.results.find(r => r.url && (r.url.includes("youtube.com/watch") || r.url.includes("youtu.be/")));
         if (match) {
-          console.log(`[YtMusicService] Found matching YouTube URL: ${match.url}`);
+          console.log(`[YtMusicService] Found YouTube URL: ${match.url}`);
           return match.url;
         }
       }
     } catch (err) {
-      console.warn(`[YtMusicService] Web search for YouTube URL failed:`, err.message);
+      console.warn(`[YtMusicService] YouTube URL search failed:`, err.message);
     }
     return null;
   }
-
 }
 
 /**
- * Downloads/resolves a song from JioSaavn (primary) or YouTube (fallback) using YtMusicService.
+ * Downloads/resolves a song from JioSaavn (primary) or YouTube (fallback).
  */
 async function downloadYoutubeAudio(query) {
   return await YtMusicService.instance.downloadAudio(query);
