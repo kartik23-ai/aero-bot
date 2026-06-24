@@ -517,7 +517,7 @@ async function fetchImageBase64(imageUrl) {
   }
 }
 
-const memeForbiddenRegex = /\b(god|bhagwan|bhagvaan|bhagwanji|bhagvaanji|allah|jesus|shiva|shiv|krishna|kisno|kisna|krishan|kanha|radhe|ram|rama|hanuman|ganesha|ganesh|ganpati|bappa|durga|kali|laxmi|lakshmi|saraswati|parvati|vishnu|bramha|brahma|mahadev|bholenath|bhole|ramji|radha|sita|hanumanji|krishn|saibaba|sai|baba|christ|muhammad|prophet|quran|bible|geeta|gita|vedas|hindu|muslim|christian|sikh|gurunanak|buddha|buddhist|temple|masjid|mosque|church|gurudwara|shree|sri|mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chutiya|gandu|lund|gaand|fuck|bitch|asshole|bastard|randi|bhadva|cunt|dick|whore|pussy|penis|vagina|chut|loda|muth|mutthal|saala|kamina|harami|sex|nude|naked|porn|xxx|nsfw|adult)\b/i;
+const memeForbiddenRegex = /\b(god|bhagwan|bhagvaan|bhagvan|bhagwanji|bhagvaanji|bhagvanji|allah|jesus|shiva|shiv|krishna|kisno|kisna|krishan|kanha|radhe|ram|rama|hanuman|ganesha|ganesh|ganpati|bappa|durga|kali|laxmi|lakshmi|saraswati|parvati|vishnu|bramha|brahma|mahadev|bholenath|bhole|ramji|radha|sita|hanumanji|krishn|saibaba|sai|baba|christ|muhammad|prophet|quran|bible|geeta|gita|vedas|hindu|muslim|christian|sikh|gurunanak|buddha|buddhist|temple|masjid|mosque|church|gurudwara|shree|shri|sri|sree|deva|devta|devi|parmatma|prabhu|lord|deity|deities|religion|religious|dharm|dharma|mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chutiya|gandu|lund|gaand|fuck|bitch|asshole|bastard|randi|bhadva|cunt|dick|whore|pussy|penis|vagina|chut|loda|muth|mutthal|saala|kamina|harami|sex|nude|naked|porn|xxx|nsfw|adult)\b/i;
 
 function isSafeMemeText(text) {
   if (!text) return true;
@@ -4463,17 +4463,15 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
   // Redirection guard for religious, abusive, or 18+ keywords requested as a topic
   const isReligiousOrForbidden = !isSafeMemeText(topic);
   if (isReligiousOrForbidden) {
-    console.log(`[MemeCommand] Religious/Forbidden topic detected ("${topic}"). Forcing generic savage template meme.`);
-    topic = "funny relatable group chat coding gaming savage";
-    cleanTopic = "relatable";
-    
-    // Bypass search and directly generate savage template meme from memegen
+    console.log(`[MemeCommand] Religious/Forbidden topic detected ("${topic}"). Redirecting directly to savage Reddit meme to bypass AI.`);
     try {
-      const base64Uri = await generateAiTemplateMeme();
-      await aero.sendMessage(dockId, "", base64Uri);
+      // Direct fetch from r/memes or r/dankmemes to avoid calling AI on forbidden context
+      const meme = await fetchRedditMeme("memes");
+      const base64Uri = await downloadImageAsBase64(meme.url);
+      await aero.sendMessage(dockId, `🤖 Direct Meme: *${meme.title}*`, base64Uri);
     } catch (err) {
-      console.error("[MemeCommand] Failed to generate AI template meme for religious redirect:", err.message);
-      const base64Uri = await generateMemeBase64("drake", "When safety filter intercepts topic", "But bot still sends a savage meme");
+      console.error("[MemeCommand] Failed to fetch generic savage meme for religious redirect:", err.message);
+      const base64Uri = await generateMemeBase64("drake", "When someone requests a forbidden meme topic", "But bot sends a savage programming meme instead");
       await aero.sendMessage(dockId, "", base64Uri);
     }
     return;
