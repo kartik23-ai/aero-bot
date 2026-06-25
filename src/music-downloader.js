@@ -59,23 +59,104 @@ class YtMusicService {
         timeout: 10000
       });
       const results = res.data.results || [];
-      if (results.length > 0) {
-        const song = results[0];
+      const queryLower = query.toLowerCase().replace(/[^a-z0-9\s]/g, "");
+      const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2); // Keywords only
+      const cleanQueryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+
+      for (const song of results) {
+        const title = song.title || song.song || "";
+        const titleLower = title.toLowerCase();
+        const artist = song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || "";
+        const artistLower = artist.toLowerCase();
+        const playCount = Number(song.play_count) || 0;
+
+        // 1. Check for instrumentals/bgm/ringtone
+        const isInstrumental = song.more_info?.is_instrumental === "true" || 
+          /\b(instrumental|karaoke|bgm|piano|flute|violin|ringtone|tribute|guitar|synthesizer|orchestra|beat)\b/i.test(titleLower);
+        const userWantsInstrumental = /\b(instrumental|karaoke|bgm|piano|flute|violin|tribute)\b/i.test(queryLower);
+        if (isInstrumental && !userWantsInstrumental) {
+          console.log(`[YtMusicService] Skipping instrumental JioSaavn result: "${title}"`);
+          continue;
+        }
+
+        // 2. Check for lofi/reverb/slowed/cover
+        const isLofi = /\b(lofi|slowed|reverb|cover|remix|mashup|reply|female)\b/i.test(titleLower);
+        const userWantsLofi = /\b(lofi|slowed|reverb|cover|remix|mashup|reply|female)\b/i.test(queryLower);
+        if (isLofi && !userWantsLofi) {
+          console.log(`[YtMusicService] Skipping lofi/reverb/cover JioSaavn result: "${title}"`);
+          continue;
+        }
+
+        // 3. Cover Artist blacklist
+        const isCoverArtist = /\b(cover|tribute|lofi|slowed|reverb|reply|recreated|remix|mix|worldwide|slow|version|swapnil|choudhary|sonu|nainsy|ajima|tuneit|dj)\b/i.test(artistLower);
+        const userWantsCoverArtist = /\b(swapnil|choudhary|sonu|nainsy|ajima|tuneit)\b/i.test(queryLower);
+        if (isCoverArtist && !userWantsCoverArtist && !userWantsLofi) {
+          console.log(`[YtMusicService] Skipping cover artist JioSaavn result: "${title}" by "${artist}"`);
+          continue;
+        }
+
+        // 4. Extra unrequested words check (e.g. user asks for "tu hai kahan", returns "tu hai kahan 2")
+        const cleanTitleWords = titleLower.replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 0);
+        let hasExtraUnrequestedWords = false;
+        for (const word of cleanTitleWords) {
+          if (["song", "mp3", "music", "audio", "download", "official", "video"].includes(word)) continue;
+          
+          const wordInQuery = cleanQueryWords.includes(word) || 
+            (word === "kahaan" && cleanQueryWords.includes("kahan")) || 
+            (word === "kahan" && cleanQueryWords.includes("kahaan"));
+            
+          if (!wordInQuery && !artistLower.includes(word)) {
+            hasExtraUnrequestedWords = true;
+            break;
+          }
+        }
+        if (hasExtraUnrequestedWords) {
+          console.log(`[YtMusicService] Skipping JioSaavn result "${title}" because it contains extra unrequested words.`);
+          continue;
+        }
+
+        // 5. Relevance check: verify that all significant query words are present in title or artist
+        let isRelevant = true;
+        for (const word of queryWords) {
+          if (["song", "mp3", "music", "audio", "download", "official", "video"].includes(word)) continue;
+          
+          if (!titleLower.includes(word) && !artistLower.includes(word)) {
+            // Check for spelling differences (kahan vs kahaan)
+            if (word === "kahan" && (titleLower.includes("kahaan") || artistLower.includes("kahaan"))) continue;
+            if (word === "kahaan" && (titleLower.includes("kahan") || artistLower.includes("kahan"))) continue;
+            
+            isRelevant = false;
+            break;
+          }
+        }
+        if (!isRelevant) {
+          console.log(`[YtMusicService] Skipping irrelevant JioSaavn result: "${title}" by "${artist}"`);
+          continue;
+        }
+
+        // 6. Play count threshold for popular songs (Skip extremely low play counts if artist is not specified)
+        let queryContainsArtist = false;
+        if (artistLower) {
+          const artistWords = artistLower.split(/[\s,]+/).filter(w => w.length > 2);
+          queryContainsArtist = artistWords.some(aw => queryLower.includes(aw));
+        }
+
+        if (playCount > 0 && playCount < 15000 && !queryContainsArtist) {
+          console.log(`[YtMusicService] Skipping low play count JioSaavn result: "${title}" (${playCount} plays)`);
+          continue;
+        }
+
         const encryptedUrl = song.more_info?.encrypted_media_url;
         if (encryptedUrl) {
           const decryptedUrl = decryptUrl(encryptedUrl);
           if (decryptedUrl) {
-            const title = song.title || song.song || query;
-            const artist = song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || "";
-            console.log(`[YtMusicService] Found JioSaavn direct CDN URL for: "${title}" by "${artist}"`);
-            
-            // Default to 160kbps high quality source if available
             let finalUrl = decryptedUrl;
             if (finalUrl.includes("_96.mp4")) {
               finalUrl = finalUrl.replace("_96.mp4", "_160.mp4");
             } else if (finalUrl.includes("_48.mp4")) {
               finalUrl = finalUrl.replace("_48.mp4", "_160.mp4");
             }
+            console.log(`[YtMusicService] Selected JioSaavn result: "${title}" by "${artist}"`);
             return { url: finalUrl, title, artist };
           }
         }
