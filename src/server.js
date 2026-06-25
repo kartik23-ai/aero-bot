@@ -3860,9 +3860,8 @@ function verifyDashboardAuth(req) {
     return true; // Bypass auth verification for test runner
   }
   const expectedPassword = process.env.DASHBOARD_PASSWORD || process.env.AERO_PASSWORD;
-  if (!expectedPassword) {
-    return true; // allow if no password configured (dev mode)
-  }
+  const hfToken = process.env.HF_TOKEN;
+
   const authHeader = req.headers["x-admin-token"] || req.headers["authorization"];
   let token = "";
   if (authHeader) {
@@ -3872,7 +3871,12 @@ function verifyDashboardAuth(req) {
       token = authHeader.trim();
     }
   }
-  return token === expectedPassword;
+
+  if (expectedPassword && token === expectedPassword) return true;
+  if (hfToken && token === hfToken) return true;
+  if (!expectedPassword && !hfToken) return true; // dev mode
+
+  return false;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -3905,7 +3909,17 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === "/api/issues/stream") {
           const token = url.searchParams.get("token");
           const expectedPassword = process.env.DASHBOARD_PASSWORD || process.env.AERO_PASSWORD;
-          if (!isTestEnv && expectedPassword && token !== expectedPassword) {
+          const hfToken = process.env.HF_TOKEN;
+          
+          let isValid = false;
+          if (isTestEnv) isValid = true;
+          else {
+            if (expectedPassword && token === expectedPassword) isValid = true;
+            if (hfToken && token === hfToken) isValid = true;
+            if (!expectedPassword && !hfToken) isValid = true;
+          }
+          
+          if (!isValid) {
             console.warn(`[Auth] Unauthorized SSE stream attempt from IP ${ip}`);
             return send(res, json(401, { error: "Unauthorized. Invalid admin token." }));
           }

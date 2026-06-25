@@ -653,7 +653,7 @@
       <div class="auth-icon"><i class="fa-solid fa-shield-halved"></i></div>
       <div class="auth-header-text">
         <h2>Admins Portal</h2>
-        <p>Enter the admin dashboard password to access the support portal.</p>
+        <p>Enter the admin password or Hugging Face access token to access the support portal.</p>
       </div>
       <form id="authForm" class="auth-form" onsubmit="handleLogin(event)">
         <div class="input-group" id="backendUrlGroup" style="display: none; margin-bottom: 12px;">
@@ -662,7 +662,7 @@
         </div>
         <div class="input-group">
           <i class="fa-solid fa-lock"></i>
-          <input type="password" id="authPassword" class="auth-input" placeholder="Enter password" required autocomplete="current-password">
+          <input type="password" id="authPassword" class="auth-input" placeholder="Enter password or HF token" required autocomplete="current-password">
         </div>
         <div id="authError" class="auth-error"></div>
         <button type="submit" class="auth-btn">Access Portal</button>
