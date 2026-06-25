@@ -243,7 +243,7 @@ class AeroAPI {
             payload.attachment = item.attachment;
           }
           
-          console.log(`[AeroAPI] [Outbound Queue] Sending message to ${item.dockId}...`);
+          console.log(`[AeroAPI] [Outbound Queue] Sending message to ${item.dockId}: "${item.text}"`);
           const res = await axios.post(
             url,
             payload,
