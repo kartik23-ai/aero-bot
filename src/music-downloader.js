@@ -88,7 +88,7 @@ class YtMusicService {
         }
 
         // 3. Cover Artist blacklist
-        const isCoverArtist = /\b(cover|tribute|lofi|slowed|reverb|reply|recreated|remix|mix|worldwide|slow|version|swapnil|choudhary|sonu|nainsy|ajima|tuneit|dj)\b/i.test(artistLower);
+        const isCoverArtist = /\b(cover|tribute|lofi|slowed|reverb|reply|recreated|swapnil|choudhary|sonu|nainsy|ajima|tuneit|dj)\b/i.test(artistLower);
         const userWantsCoverArtist = /\b(swapnil|choudhary|sonu|nainsy|ajima|tuneit)\b/i.test(queryLower);
         if (isCoverArtist && !userWantsCoverArtist && !userWantsLofi) {
           console.log(`[YtMusicService] Skipping cover artist JioSaavn result: "${title}" by "${artist}"`);
@@ -191,7 +191,7 @@ class YtMusicService {
       const fileBuffer = fs.readFileSync(mp3File);
       const base64Data = fileBuffer.toString("base64");
       console.log(`[YtMusicService] ✅ JioSaavn download+compress succeeded! Base64 length: ${base64Data.length}`);
-      return `data:audio/mp3;base64,${base64Data}`;
+      return `data:application/octet-stream;base64,${base64Data}`;
 
     } finally {
       // Cleanup temp files
@@ -291,7 +291,7 @@ class YtMusicService {
         if (fs.existsSync(expectedFilePath)) {
           try {
             const fileBuffer = fs.readFileSync(expectedFilePath);
-            const audioUri = `data:audio/mp3;base64,${fileBuffer.toString("base64")}`;
+            const audioUri = `data:application/octet-stream;base64,${fileBuffer.toString("base64")}`;
             fs.unlink(expectedFilePath, () => {});
             resolve(audioUri);
           } catch (readErr) {
@@ -305,7 +305,7 @@ class YtMusicService {
               const matchPath = path.join(tempDir, match);
               try {
                 const fileBuffer = fs.readFileSync(matchPath);
-                const audioUri = `data:audio/mp3;base64,${fileBuffer.toString("base64")}`;
+                const audioUri = `data:application/octet-stream;base64,${fileBuffer.toString("base64")}`;
                 fs.unlink(matchPath, () => {});
                 resolve(audioUri);
               } catch (err) { reject(err); }
