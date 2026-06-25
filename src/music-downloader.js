@@ -191,7 +191,7 @@ class YtMusicService {
       const fileBuffer = fs.readFileSync(mp3File);
       const base64Data = fileBuffer.toString("base64");
       console.log(`[YtMusicService] ✅ JioSaavn download+compress succeeded! Base64 length: ${base64Data.length}`);
-      return `data:application/octet-stream;base64,${base64Data}`;
+      return `data:audio/mpeg;name=${encodeURIComponent(filename)};base64,${base64Data}`;
 
     } finally {
       // Cleanup temp files
@@ -248,7 +248,7 @@ class YtMusicService {
     for (const target of ytTargets) {
       try {
         console.log(`[YtMusicService] Trying yt-dlp: ${target.name}`);
-        const audioUri = await this._executeYtDlp(target.url);
+        const audioUri = await this._executeYtDlp(target.url, resolvedFilename);
         if (audioUri) {
           return { uri: audioUri, filename: resolvedFilename, isDirectUrl: false };
         }
@@ -260,7 +260,7 @@ class YtMusicService {
     throw new Error("All download sources failed.");
   }
 
-  _executeYtDlp(target) {
+  _executeYtDlp(target, filename) {
     return new Promise((resolve, reject) => {
       const tempDir = os.tmpdir();
       const tempFileId = "yt-" + Math.random().toString(36).substring(2, 10);
@@ -291,7 +291,7 @@ class YtMusicService {
         if (fs.existsSync(expectedFilePath)) {
           try {
             const fileBuffer = fs.readFileSync(expectedFilePath);
-            const audioUri = `data:application/octet-stream;base64,${fileBuffer.toString("base64")}`;
+            const audioUri = `data:audio/mpeg;name=${encodeURIComponent(filename)};base64,${fileBuffer.toString("base64")}`;
             fs.unlink(expectedFilePath, () => {});
             resolve(audioUri);
           } catch (readErr) {
@@ -305,7 +305,7 @@ class YtMusicService {
               const matchPath = path.join(tempDir, match);
               try {
                 const fileBuffer = fs.readFileSync(matchPath);
-                const audioUri = `data:application/octet-stream;base64,${fileBuffer.toString("base64")}`;
+                const audioUri = `data:audio/mpeg;name=${encodeURIComponent(filename)};base64,${fileBuffer.toString("base64")}`;
                 fs.unlink(matchPath, () => {});
                 resolve(audioUri);
               } catch (err) { reject(err); }
