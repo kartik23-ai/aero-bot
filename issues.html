@@ -767,6 +767,15 @@
       apiBase = "https://aero-bot-aero-bot.hf.space";
     }
 
+    function resolveImageUrl(imagePath) {
+      if (!imagePath) return '';
+      if (imagePath.startsWith('http://') || imagePath.startsWith('https://') || imagePath.startsWith('data:')) {
+        return imagePath;
+      }
+      const base = apiBase.replace(/\/$/, '');
+      return `${base}/${imagePath.replace(/^\//, '')}`;
+    }
+
     let issues = [];
     let currentFilter = 'all'; // all, pending, solved
     let searchQuery = '';
@@ -1130,7 +1139,7 @@
           
           ${i.image ? `
             <div class="issue-image-container" style="margin-top: 12px; margin-bottom: 8px;">
-              <img src="${i.image}" style="max-width: 100%; max-height: 350px; border-radius: 8px; border: 1px solid rgba(147, 51, 234, 0.2); cursor: pointer;" alt="Issue screenshot" onclick="window.open('${i.image}', '_blank')">
+              <img src="${resolveImageUrl(i.image)}" style="max-width: 100%; max-height: 350px; border-radius: 8px; border: 1px solid rgba(147, 51, 234, 0.2); cursor: pointer;" alt="Issue screenshot" onclick="window.open(resolveImageUrl('${i.image}'), '_blank')">
             </div>
           ` : ""}
           

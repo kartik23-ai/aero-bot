@@ -1019,8 +1019,15 @@ async function downloadAttachmentAsBuffer(attachmentUrl) {
   
   let targetUrl = attachmentUrl;
   const headers = {};
-  if (targetUrl.startsWith("/")) {
+  if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://") && !targetUrl.startsWith("data:")) {
+    if (!targetUrl.startsWith("/")) {
+      targetUrl = "/" + targetUrl;
+    }
     targetUrl = `https://api.aryankaushik.space/api${targetUrl}`;
+  }
+  
+  if (targetUrl.startsWith("https://api.aryankaushik.space/") && !targetUrl.includes("/api/")) {
+    targetUrl = targetUrl.replace("https://api.aryankaushik.space/", "https://api.aryankaushik.space/api/");
   }
   
   if (targetUrl.includes("aryankaushik.space")) {
@@ -1056,6 +1063,38 @@ async function downloadAttachmentAsBuffer(attachmentUrl) {
     }
   }
   return null;
+}
+
+async function downloadAndSaveIssueImage(rawUrl) {
+  if (!rawUrl) return null;
+  try {
+    console.log(`[UploadImage] Attempting to download issue image: ${rawUrl}`);
+    const buffer = await downloadAttachmentAsBuffer(rawUrl);
+    if (!buffer) {
+      console.log(`[UploadImage] Download returned empty buffer.`);
+      return null;
+    }
+    
+    let ext = ".webp";
+    if (rawUrl.toLowerCase().includes(".png")) ext = ".png";
+    else if (rawUrl.toLowerCase().includes(".jpg") || rawUrl.toLowerCase().includes(".jpeg")) ext = ".jpg";
+    else if (rawUrl.toLowerCase().includes(".gif")) ext = ".gif";
+    
+    const filename = `issue_img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+    
+    const uploadsDir = path.join(__dirname, "..", "public", "uploads");
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    const destPath = path.join(uploadsDir, filename);
+    fs.writeFileSync(destPath, buffer);
+    console.log(`[UploadImage] Successfully saved image to: ${destPath}`);
+    
+    return `/uploads/${filename}`;
+  } catch (err) {
+    console.error(`[UploadImage] Failed to download and save image:`, err.message);
+    return null;
+  }
 }
 
 async function resolveReplyMessage(dockId, replyToMsg) {
@@ -3538,6 +3577,12 @@ IMPORTANT:
       
       if (pendingIssue) {
         const issueId = `ISSUE-${issuesDbCache.nextIssueId++}`;
+        
+        let savedImagePath = null;
+        if (pendingIssue.image) {
+          savedImagePath = await downloadAndSaveIssueImage(pendingIssue.image);
+        }
+        
         const newIssue = {
           id: issueId,
           text: pendingIssue.issueText,
@@ -3547,7 +3592,7 @@ IMPORTANT:
           username: pendingIssue.targetUsername,
           adminId: senderId,
           adminUsername: pendingIssue.adminUsername,
-          image: pendingIssue.image || null,
+          image: savedImagePath || pendingIssue.image || null,
           status: "pending",
           createdAt: Date.now(),
           resolvedAt: null,
@@ -4775,6 +4820,12 @@ I will automatically log it as a task and keep you updated! 😊`;
           
           if (pendingIssue) {
             const issueId = `ISSUE-${issuesDbCache.nextIssueId++}`;
+            
+            let savedImagePath = null;
+            if (pendingIssue.image) {
+              savedImagePath = await downloadAndSaveIssueImage(pendingIssue.image);
+            }
+            
             const newIssue = {
               id: issueId,
               text: pendingIssue.issueText,
@@ -4784,7 +4835,7 @@ I will automatically log it as a task and keep you updated! 😊`;
               username: pendingIssue.targetUsername,
               adminId: senderId,
               adminUsername: pendingIssue.adminUsername,
-              image: pendingIssue.image || null,
+              image: savedImagePath || pendingIssue.image || null,
               status: "pending",
               createdAt: Date.now(),
               resolvedAt: null,
@@ -5429,7 +5480,16 @@ function serveStatic(res, pathname) {
   const filePath = path.join(__dirname, "..", "public", path.normalize(safePath).replace(/^(\.\.[/\\])+/, ""));
   if (!filePath.startsWith(path.join(__dirname, "..", "public"))) return send(res, json(403, { error: "Forbidden" }));
   if (!fs.existsSync(filePath)) return send(res, json(404, { error: "Not found" }));
-  const contentType = filePath.endsWith(".css") ? "text/css" : filePath.endsWith(".js") ? "application/javascript" : "text/html";
+  
+  let contentType = "text/html";
+  if (filePath.endsWith(".css")) contentType = "text/css";
+  else if (filePath.endsWith(".js")) contentType = "application/javascript";
+  else if (filePath.endsWith(".webp")) contentType = "image/webp";
+  else if (filePath.endsWith(".png")) contentType = "image/png";
+  else if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) contentType = "image/jpeg";
+  else if (filePath.endsWith(".gif")) contentType = "image/gif";
+  else if (filePath.endsWith(".mp3")) contentType = "audio/mpeg";
+  
   return send(res, { status: 200, headers: { "content-type": contentType }, body: fs.readFileSync(filePath) });
 }
 
