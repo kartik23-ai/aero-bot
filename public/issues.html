@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customer Support Issues Portal</title>
+  <!-- Google Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- FontAwesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0d0b18 0%, #150f2b 50%, #08060f 100%);
+      --panel-bg: rgba(22, 17, 43, 0.45);
+      --panel-border: rgba(147, 51, 234, 0.2);
+      --panel-glow: 0 8px 32px 0 rgba(147, 51, 234, 0.08);
+      --accent-color: #a855f7;
+      --accent-glow: 0 0 20px rgba(168, 85, 247, 0.4);
+      --success-color: #10b981;
+      --warning-color: #f59e0b;
+      --danger-color: #ef4444;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --font-outfit: 'Outfit', sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-outfit);
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Glassmorphism Backdrop Filter */
+    .glass {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--panel-glow);
+      border-radius: 16px;
+    }
+
+    header {
+      padding: 24px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      font-size: 28px;
+      color: var(--accent-color);
+      text-shadow: var(--accent-glow);
+    }
+
+    .logo-title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      background: linear-gradient(to right, #f3f4f6, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .logout-btn {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: var(--font-outfit);
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .logout-btn:hover {
+      background: rgba(239, 68, 68, 0.3);
+      border-color: rgba(239, 68, 68, 0.5);
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.15);
+    }
+
+    main {
+      flex: 1;
+      padding: 40px;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 24px;
+    }
+
+    .stat-card {
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      right: -20%;
+      width: 120px;
+      height: 120px;
+      background: var(--accent-color);
+      opacity: 0.05;
+      filter: blur(40px);
+      border-radius: 50%;
+    }
+
+    .stat-info {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+    }
+
+    .stat-icon-wrapper {
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .stat-total { background: rgba(168, 85, 247, 0.15); color: var(--accent-color); border: 1px solid rgba(168, 85, 247, 0.3); }
+    .stat-pending { background: rgba(245, 158, 11, 0.15); color: var(--warning-color); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .stat-solved { background: rgba(16, 185, 129, 0.15); color: var(--success-color); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .stat-rate { background: rgba(6, 182, 212, 0.15); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.3); }
+
+    /* Dashboard Layout */
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 32px;
+    }
+
+    @media(min-width: 1024px) {
+      .dashboard-layout {
+        grid-template-columns: 380px 1fr;
+      }
+    }
+
+    /* Sidebar / Charts Container */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .chart-box {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .chart-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chart-container {
+      position: relative;
+      height: 220px;
+      width: 100%;
+    }
+
+    /* Content Area */
+    .content-area {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .control-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .filters-group {
+      display: flex;
+      gap: 8px;
+      background: rgba(13, 10, 24, 0.6);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--panel-border);
+    }
+
+    .filter-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: var(--font-outfit);
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .filter-btn.active {
+      background: var(--accent-color);
+      color: var(--text-main);
+      box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
+    }
+
+    .search-wrapper {
+      position: relative;
+      max-width: 320px;
+      width: 100%;
+    }
+
+    .search-input {
+      width: 100%;
+      background: rgba(13, 10, 24, 0.6);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 10px 16px 10px 40px;
+      color: var(--text-main);
+      font-family: var(--font-outfit);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.3s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent-color);
+      box-shadow: 0 0 10px rgba(168, 85, 247, 0.1);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    /* Issues List */
+    .issues-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 200px;
+    }
+
+    .issue-card {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+
+    .issue-card:hover {
+      border-color: rgba(147, 51, 234, 0.4);
+      transform: translateY(-2px);
+    }
+
+    .issue-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .issue-meta-left {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .issue-id-badge {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent-color);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .issue-timestamp {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-badge {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-badge.pending {
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      color: var(--warning-color);
+    }
+
+    .status-badge.solved {
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: var(--success-color);
+    }
+
+    .issue-content {
+      font-size: 15px;
+      line-height: 1.6;
+      background: rgba(13, 10, 24, 0.4);
+      padding: 14px 18px;
+      border-radius: 8px;
+      border-left: 3px solid var(--accent-color);
+    }
+
+    .issue-relations {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .relation-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .relation-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .relation-value {
+      font-size: 14px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .relation-value i {
+      color: var(--accent-color);
+    }
+
+    .action-panel {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding-top: 8px;
+    }
+
+    .solve-btn {
+      background: linear-gradient(to right, #059669, #10b981);
+      border: none;
+      color: var(--text-main);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-family: var(--font-outfit);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+    }
+
+    .solve-btn:hover {
+      box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .resolved-by-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--success-color);
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .empty-state {
+      padding: 60px 24px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      color: var(--text-muted);
+      opacity: 0.5;
+    }
+
+    .empty-text {
+      font-size: 16px;
+      color: var(--text-muted);
+    }
+
+    /* Auth Overlay Card */
+    .auth-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(5, 3, 10, 0.85);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      padding: 40px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      border-color: rgba(147, 51, 234, 0.3);
+      position: relative;
+    }
+
+    .auth-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 50% 0%, rgba(168, 85, 247, 0.1) 0%, transparent 70%);
+      pointer-events: none;
+      border-radius: 16px;
+    }
+
+    .auth-icon {
+      font-size: 40px;
+      color: var(--accent-color);
+      text-shadow: var(--accent-glow);
+    }
+
+    .auth-header-text h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .auth-header-text p {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .auth-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .input-group {
+      position: relative;
+    }
+
+    .input-group i {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 16px;
+    }
+
+    .auth-input {
+      width: 100%;
+      background: rgba(13, 10, 24, 0.7);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 12px 16px 12px 42px;
+      color: var(--text-main);
+      font-family: var(--font-outfit);
+      font-size: 15px;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    .auth-input:focus {
+      border-color: var(--accent-color);
+      box-shadow: 0 0 15px rgba(168, 85, 247, 0.15);
+    }
+
+    .auth-btn {
+      background: linear-gradient(to right, #8b5cf6, #d946ef);
+      border: none;
+      color: var(--text-main);
+      padding: 12px;
+      border-radius: 10px;
+      font-family: var(--font-outfit);
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(168, 85, 247, 0.25);
+    }
+
+    .auth-btn:hover {
+      box-shadow: 0 6px 20px rgba(168, 85, 247, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .auth-error {
+      color: #f87171;
+      font-size: 13px;
+      font-weight: 500;
+      min-height: 18px;
+    }
+
+    /* Toast Notification */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 1001;
+    }
+
+    .toast {
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      animation: slideIn 0.3s ease forwards;
+      border-left: 4px solid var(--accent-color);
+      min-width: 280px;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(120%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .toast i {
+      font-size: 18px;
+    }
+
+    .toast.success { border-left-color: var(--success-color); }
+    .toast.success i { color: var(--success-color); }
+    .toast.info { border-left-color: var(--accent-color); }
+    .toast.info i { color: var(--accent-color); }
+
+    .toast-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .toast-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .toast-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Auth Overlay -->
+  <div id="authOverlay" class="auth-overlay">
+    <div class="auth-card glass">
+      <div class="auth-icon"><i class="fa-solid fa-shield-halved"></i></div>
+      <div class="auth-header-text">
+        <h2>Admins Portal</h2>
+        <p>Enter the admin dashboard password to access the support portal.</p>
+      </div>
+      <form id="authForm" class="auth-form" onsubmit="handleLogin(event)">
+        <div class="input-group">
+          <i class="fa-solid fa-lock"></i>
+          <input type="password" id="authPassword" class="auth-input" placeholder="Enter password" required autocomplete="current-password">
+        </div>
+        <div id="authError" class="auth-error"></div>
+        <button type="submit" class="auth-btn">Access Portal</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main Content App -->
+  <header>
+    <div class="logo-container">
+      <div class="logo-icon"><i class="fa-solid fa-headset"></i></div>
+      <div class="logo-title">AERO SUPPORT PORTAL</div>
+    </div>
+    <button class="logout-btn" onclick="handleLogout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+  </header>
+
+  <main>
+    <!-- Statistics Cards -->
+    <div class="stats-grid">
+      <div class="stat-card glass">
+        <div class="stat-info">
+          <div class="stat-label">Total Issues</div>
+          <div id="statTotal" class="stat-value">0</div>
+        </div>
+        <div class="stat-icon-wrapper stat-total"><i class="fa-solid fa-folder-open"></i></div>
+      </div>
+      <div class="stat-card glass">
+        <div class="stat-info">
+          <div class="stat-label">Pending</div>
+          <div id="statPending" class="stat-value">0</div>
+        </div>
+        <div class="stat-icon-wrapper stat-pending"><i class="fa-solid fa-clock"></i></div>
+      </div>
+      <div class="stat-card glass">
+        <div class="stat-info">
+          <div class="stat-label">Resolved</div>
+          <div id="statSolved" class="stat-value">0</div>
+        </div>
+        <div class="stat-icon-wrapper stat-solved"><i class="fa-solid fa-check-double"></i></div>
+      </div>
+      <div class="stat-card glass">
+        <div class="stat-info">
+          <div class="stat-label">Resolution Rate</div>
+          <div id="statRate" class="stat-value">0%</div>
+        </div>
+        <div class="stat-icon-wrapper stat-rate"><i class="fa-solid fa-chart-line"></i></div>
+      </div>
+    </div>
+
+    <!-- Layout Grid -->
+    <div class="dashboard-layout">
+      <!-- Left Column: Charts -->
+      <div class="sidebar">
+        <div class="chart-box glass">
+          <div class="chart-title"><i class="fa-solid fa-pie-chart"></i> Issue Status Ratio</div>
+          <div class="chart-container">
+            <canvas id="statusChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-box glass">
+          <div class="chart-title"><i class="fa-solid fa-cubes"></i> Category / Group-wise</div>
+          <div class="chart-container">
+            <canvas id="groupChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-box glass">
+          <div class="chart-title"><i class="fa-solid fa-user-shield"></i> Admins Leaderboard</div>
+          <div class="chart-container">
+            <canvas id="adminChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Control Panel and Issues list -->
+      <div class="content-area">
+        <div class="control-header">
+          <div class="filters-group">
+            <button id="filterAll" class="filter-btn active" onclick="setFilter('all')">All</button>
+            <button id="filterPending" class="filter-btn" onclick="setFilter('pending')">Pending</button>
+            <button id="filterSolved" class="filter-btn" onclick="setFilter('solved')">Resolved</button>
+          </div>
+          
+          <div class="search-wrapper">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="searchInput" class="search-input" placeholder="Search by text, user, or group..." oninput="handleSearch()">
+          </div>
+        </div>
+
+        <div id="issuesList" class="issues-list">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script>
+    let token = localStorage.getItem('supportPortalToken') || '';
+    let issues = [];
+    let currentFilter = 'all'; // all, pending, solved
+    let searchQuery = '';
+    let statusChartInstance = null;
+    let groupChartInstance = null;
+    let adminChartInstance = null;
+    let eventSource = null;
+
+    // Detect if served locally or hosted
+    const API_BASE = window.location.origin;
+
+    window.onload = function() {
+      if (token) {
+        document.getElementById('authOverlay').style.display = 'none';
+        initializePortal();
+      }
+    };
+
+    function handleLogin(e) {
+      e.preventDefault();
+      const pwInput = document.getElementById('authPassword');
+      const errorDiv = document.getElementById('authError');
+      const pw = pwInput.value.trim();
+      
+      if (!pw) return;
+
+      errorDiv.textContent = '';
+      
+      // Test the password against the /api/issues endpoint
+      fetch(`${API_BASE}/api/issues`, {
+        headers: {
+          'Authorization': `Bearer ${pw}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      .then(res => {
+        if (res.status === 401) {
+          throw new Error('Incorrect admin password. Please try again.');
+        }
+        if (!res.ok) {
+          throw new Error('Server returned error: ' + res.status);
+        }
+        return res.json();
+      })
+      .then(data => {
+        token = pw;
+        localStorage.setItem('supportPortalToken', token);
+        document.getElementById('authOverlay').style.display = 'none';
+        showToast('success', 'Access Granted', 'Logged in successfully.');
+        issues = data.issues || [];
+        initializePortal();
+      })
+      .catch(err => {
+        errorDiv.textContent = err.message;
+      });
+    }
+
+    function handleLogout() {
+      localStorage.removeItem('supportPortalToken');
+      if (eventSource) {
+        eventSource.close();
+      }
+      location.reload();
+    }
+
+    function initializePortal() {
+      fetchIssues();
+      setupSSE();
+    }
+
+    function fetchIssues() {
+      fetch(`${API_BASE}/api/issues`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      .then(res => {
+        if (res.status === 401) {
+          handleLogout();
+          return;
+        }
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.success) {
+          issues = data.issues || [];
+          renderDashboard();
+        }
+      })
+      .catch(err => {
+        console.error('Failed to fetch issues:', err);
+        showToast('danger', 'Sync Error', 'Failed to retrieve issues database.');
+      });
+    }
+
+    function setupSSE() {
+      const sseUrl = `${API_BASE}/api/issues/stream?token=${encodeURIComponent(token)}`;
+      eventSource = new EventSource(sseUrl);
+
+      eventSource.onmessage = function(e) {
+        try {
+          const { event, data } = JSON.parse(e.data);
+          console.log('[SSE EVENT]', event, data);
+          
+          if (event === 'issue_created') {
+            // Append new issue
+            issues.push(data);
+            showToast('info', 'New Issue Registered', `${data.id} filed from ${data.dockName}`);
+          } else if (event === 'issue_updated') {
+            // Update existing issue
+            const idx = issues.findIndex(i => i.id === data.id);
+            if (idx !== -1) {
+              issues[idx] = data;
+              showToast('success', 'Issue Resolved', `${data.id} has been marked solved.`);
+            }
+          }
+          renderDashboard();
+        } catch (err) {
+          console.error('[SSE] Failed to parse stream data:', err);
+        }
+      };
+
+      eventSource.onerror = function(err) {
+        console.warn('[SSE] EventSource connection encountered error, reconnecting...', err);
+      };
+    }
+
+    function solveIssue(issueId) {
+      if (!confirm(`Are you sure you want to mark ${issueId} as solved?`)) return;
+
+      fetch(`${API_BASE}/api/issues/solve`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ issueId })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          // Local update will also be handled by SSE, but we update locally just in case
+          const idx = issues.findIndex(i => i.id === issueId);
+          if (idx !== -1) {
+            issues[idx] = data.issue;
+            renderDashboard();
+          }
+        } else {
+          showToast('danger', 'Error', data.error || 'Failed to solve issue.');
+        }
+      })
+      .catch(err => {
+        console.error('Failed to solve issue:', err);
+        showToast('danger', 'Network Error', 'Failed to send resolution request.');
+      });
+    }
+
+    function renderDashboard() {
+      renderStats();
+      renderCharts();
+      renderIssuesList();
+    }
+
+    function renderStats() {
+      const total = issues.length;
+      const solved = issues.filter(i => i.status === 'solved').length;
+      const pending = total - solved;
+      const rate = total > 0 ? Math.round((solved / total) * 100) : 0;
+
+      document.getElementById('statTotal').textContent = total;
+      document.getElementById('statPending').textContent = pending;
+      document.getElementById('statSolved').textContent = solved;
+      document.getElementById('statRate').textContent = `${rate}%`;
+    }
+
+    function renderCharts() {
+      // 1. Status Chart (Doughnut)
+      const solved = issues.filter(i => i.status === 'solved').length;
+      const pending = issues.length - solved;
+
+      if (statusChartInstance) statusChartInstance.destroy();
+      const ctxStatus = document.getElementById('statusChart').getContext('2d');
+      statusChartInstance = new Chart(ctxStatus, {
+        type: 'doughnut',
+        data: {
+          labels: ['Pending', 'Resolved'],
+          datasets: [{
+            data: [pending, solved],
+            backgroundColor: ['#f59e0b', '#10b981'],
+            borderColor: '#150f2b',
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#f3f4f6', font: { family: 'Outfit', size: 12 } }
+            }
+          }
+        }
+      });
+
+      // 2. Group/Dock Distribution (Horizontal Bar)
+      const groupCounts = {};
+      issues.forEach(i => {
+        const name = i.dockName || 'Unknown Group';
+        groupCounts[name] = (groupCounts[name] || 0) + 1;
+      });
+
+      const groupLabels = Object.keys(groupCounts);
+      const groupData = Object.values(groupCounts);
+
+      if (groupChartInstance) groupChartInstance.destroy();
+      const ctxGroup = document.getElementById('groupChart').getContext('2d');
+      groupChartInstance = new Chart(ctxGroup, {
+        type: 'bar',
+        data: {
+          labels: groupLabels,
+          datasets: [{
+            label: 'Issues',
+            data: groupData,
+            backgroundColor: '#a855f7',
+            borderColor: '#a855f7',
+            borderWidth: 1,
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: 'y',
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            x: { ticks: { color: '#9ca3af', font: { family: 'Outfit' } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#f3f4f6', font: { family: 'Outfit' } }, grid: { display: false } }
+          }
+        }
+      });
+
+      // 3. Admin-wise distribution (Bar)
+      const adminCounts = {};
+      issues.forEach(i => {
+        const adminName = i.adminUsername || 'System';
+        adminCounts[adminName] = (adminCounts[adminName] || 0) + 1;
+      });
+      const adminLabels = Object.keys(adminCounts);
+      const adminData = Object.values(adminCounts);
+
+      if (adminChartInstance) adminChartInstance.destroy();
+      const ctxAdmin = document.getElementById('adminChart').getContext('2d');
+      adminChartInstance = new Chart(ctxAdmin, {
+        type: 'bar',
+        data: {
+          labels: adminLabels,
+          datasets: [{
+            label: 'Logged Issues',
+            data: adminData,
+            backgroundColor: '#06b6d4',
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            x: { ticks: { color: '#f3f4f6', font: { family: 'Outfit' } }, grid: { display: false } },
+            y: { ticks: { color: '#9ca3af', font: { family: 'Outfit' } }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          }
+        }
+      });
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+      document.getElementById(`filter${filter.charAt(0).toUpperCase() + filter.slice(1)}`).classList.add('active');
+      renderIssuesList();
+    }
+
+    function handleSearch() {
+      searchQuery = document.getElementById('searchInput').value.trim().toLowerCase();
+      renderIssuesList();
+    }
+
+    function renderIssuesList() {
+      const container = document.getElementById('issuesList');
+      container.innerHTML = '';
+
+      // Filter
+      let filtered = issues;
+      if (currentFilter === 'pending') {
+        filtered = issues.filter(i => i.status === 'pending');
+      } else if (currentFilter === 'solved') {
+        filtered = issues.filter(i => i.status === 'solved');
+      }
+
+      // Search
+      if (searchQuery) {
+        filtered = filtered.filter(i => 
+          i.text.toLowerCase().includes(searchQuery) ||
+          i.id.toLowerCase().includes(searchQuery) ||
+          (i.username && i.username.toLowerCase().includes(searchQuery)) ||
+          (i.dockName && i.dockName.toLowerCase().includes(searchQuery)) ||
+          (i.adminUsername && i.adminUsername.toLowerCase().includes(searchQuery))
+        );
+      }
+
+      // Sort newest first
+      filtered.sort((a, b) => b.createdAt - a.createdAt);
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state glass">
+            <div class="empty-icon"><i class="fa-solid fa-box-open"></i></div>
+            <div class="empty-text">No issues match the selected filters or search terms.</div>
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach(i => {
+        const dateStr = new Date(i.createdAt).toLocaleString();
+        const card = document.createElement('div');
+        card.className = 'issue-card glass';
+        
+        const actionHtml = i.status === 'pending' 
+          ? `<div class="action-panel"><button class="solve-btn" onclick="solveIssue('${i.id}')"><i class="fa-solid fa-check"></i> Mark Solved</button></div>`
+          : `<div class="action-panel"><span class="resolved-by-badge"><i class="fa-solid fa-circle-check"></i> Solved on ${new Date(i.resolvedAt).toLocaleString()}</span></div>`;
+
+        card.innerHTML = `
+          <div class="issue-header">
+            <div class="issue-meta-left">
+              <span class="issue-id-badge"><i class="fa-solid fa-ticket"></i> ${i.id}</span>
+              <span class="issue-timestamp">${dateStr}</span>
+            </div>
+            <span class="status-badge ${i.status}">
+              <i class="fa-solid ${i.status === 'solved' ? 'fa-check-circle' : 'fa-hourglass-half'}"></i> ${i.status}
+            </span>
+          </div>
+          
+          <div class="issue-content">${escapeHTML(i.text)}</div>
+          
+          <div class="issue-relations">
+            <div class="relation-item">
+              <span class="relation-label">Group/Dock</span>
+              <span class="relation-value"><i class="fa-solid fa-network-wired"></i> ${escapeHTML(i.dockName || 'Group Chat')}</span>
+            </div>
+            <div class="relation-item">
+              <span class="relation-label">Affected User</span>
+              <span class="relation-value"><i class="fa-solid fa-user"></i> @${escapeHTML(i.username || 'User')}</span>
+            </div>
+            <div class="relation-item">
+              <span class="relation-label">Filed By Admin</span>
+              <span class="relation-value"><i class="fa-solid fa-user-shield"></i> @${escapeHTML(i.adminUsername || 'Admin')}</span>
+            </div>
+          </div>
+          
+          ${actionHtml}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function escapeHTML(str) {
+      if (!str) return '';
+      return str.replace(/[&<>'"]/g, 
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+      );
+    }
+
+    function showToast(type, title, desc) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast glass ${type}`;
+      
+      const icon = type === 'success' ? 'fa-check-circle' : 'fa-info-circle';
+      toast.innerHTML = `
+        <i class="fa-solid ${icon}"></i>
+        <div class="toast-content">
+          <span class="toast-title">${title}</span>
+          <span class="toast-desc">${desc}</span>
+        </div>
+      `;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.animation = 'slideIn 0.3s ease reverse forwards';
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+  </script>
+</body>
+</html>

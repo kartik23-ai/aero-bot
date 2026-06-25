@@ -317,6 +317,71 @@ function scheduleFirestoreMemorySync(data) {
   }, 10000); // Sync to Firestore at most once every 10 seconds
 }
 
+// Issues Database & Pending States
+let issuesDbCache = { nextIssueId: 1, issues: [] };
+const pendingIssues = new Map(); // key: `${dockId}:${adminId}`, value: { issueText, targetUserId, targetUsername, adminUsername, timestamp }
+let sseClients = [];
+
+function broadcastSseEvent(event, data) {
+  const payload = JSON.stringify({ event, data });
+  for (const client of sseClients) {
+    try {
+      client.res.write(`data: ${payload}\n\n`);
+    } catch (err) {
+      // client connection might be broken
+    }
+  }
+}
+
+function loadIssuesDb() {
+  const dbPath = path.join(__dirname, "..", "db", "issues_database.json");
+  try {
+    if (fs.existsSync(dbPath)) {
+      const raw = fs.readFileSync(dbPath, "utf-8");
+      issuesDbCache = JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error("[IssuesDB] Failed to load local issues database:", err.message);
+  }
+}
+
+let lastFirestoreIssuesSyncData = null;
+let firestoreIssuesSyncTimeout = null;
+
+function syncIssuesToFirestore() {
+  if (!firestoreDb) return;
+  lastFirestoreIssuesSyncData = JSON.parse(JSON.stringify(issuesDbCache));
+  if (firestoreIssuesSyncTimeout) return;
+  firestoreIssuesSyncTimeout = true;
+  setTimeout(() => {
+    firestoreIssuesSyncTimeout = false;
+    if (lastFirestoreIssuesSyncData) {
+      firestoreDb.collection("settings").doc("issues_database").set(lastFirestoreIssuesSyncData)
+        .then(() => {
+          console.log("[Firestore] Issues database successfully synced to cloud.");
+        })
+        .catch(err => {
+          console.error("[Firestore] Failed to sync issues database:", err.message);
+        });
+    }
+  }, 10000);
+}
+
+function saveIssuesDb(data) {
+  issuesDbCache = data;
+  const dbPath = path.join(__dirname, "..", "db", "issues_database.json");
+  try {
+    const dbDir = path.dirname(dbPath);
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    fs.writeFileSync(dbPath, JSON.stringify(data, null, 2), "utf-8");
+    syncIssuesToFirestore();
+  } catch (err) {
+    console.error("[IssuesDB] Failed to write local issues database:", err.message);
+  }
+}
+
 function saveGroupDb(data) {
   if (aero.docks && Array.isArray(aero.docks)) {
     data.docks = JSON.parse(JSON.stringify(aero.docks));
@@ -3287,6 +3352,41 @@ IMPORTANT:
       }
       reply = null;
       handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings);
+    } else if (cmdName === "issue") {
+      const isSenderAdmin = await checkIsAdmin(dockId, senderId);
+      if (!isSenderAdmin) {
+        reply = "❌ Permission denied. Only group administrators can register issues.";
+      } else {
+        const replyToMsg = msg.replyToMessageId || msg.replyTo;
+        if (!replyToMsg) {
+          reply = "❌ Please reply to a message containing the issue description with **/issue**.";
+        } else {
+          const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+          const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+          
+          let parentUsername = "User";
+          if (parentSenderObj && typeof parentSenderObj === "object") {
+            parentUsername = parentSenderObj.username || parentSenderObj.fullName || "User";
+          } else if (parentSenderId) {
+            const details = await resolveSenderDetails(parentSenderId);
+            parentUsername = details.username || details.displayName || "User";
+          }
+          
+          const issueText = replyToMsg.text || "[Attachment/Media]";
+          const targetDockName = (targetDock && targetDock.name) || "Group Chat";
+          
+          pendingIssues.set(`${dockId}:${senderId}`, {
+            issueText,
+            targetUserId: parentSenderId || "unknown",
+            targetUsername: parentUsername,
+            dockName: targetDockName,
+            adminUsername: senderUsername || senderName,
+            timestamp: Date.now()
+          });
+          
+          reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, ya reject karne ke liye **/no** reply karein.`;
+        }
+      }
     } else if (cmdName === "play") {
       if (groupSettings.botDisabled) {
         console.log(`[BotControl] Bot is disabled for dock ${dockId}. Skipping play command.`);
@@ -3334,8 +3434,35 @@ IMPORTANT:
         reply = `⚠️ @${senderName}, please confirm your report by replying with **/yes** or **/no**.\n\n⚠️ **WARNING**: Agar koi faltu ka message ya bemtlb ka message hua to vo id ban ya terminate ka cause ban sakta he.`;
       }
     } else if (cmdName === "yes") {
+      const pendingIssue = pendingIssues.get(`${dockId}:${senderId}`);
       const pendingReport = pendingUserReports.get(senderId);
-      if (pendingReport) {
+      
+      if (pendingIssue) {
+        const issueId = `ISSUE-${issuesDbCache.nextIssueId++}`;
+        const newIssue = {
+          id: issueId,
+          text: pendingIssue.issueText,
+          dockId: dockId,
+          dockName: pendingIssue.dockName,
+          userId: pendingIssue.targetUserId,
+          username: pendingIssue.targetUsername,
+          adminId: senderId,
+          adminUsername: pendingIssue.adminUsername,
+          status: "pending",
+          createdAt: Date.now(),
+          resolvedAt: null,
+          resolvedBy: null
+        };
+        
+        issuesDbCache.issues.push(newIssue);
+        saveIssuesDb(issuesDbCache);
+        
+        // Broadcast via SSE
+        broadcastSseEvent("issue_created", newIssue);
+        
+        reply = `✅ **[Issue Registered]**\n\n🆔 **ID:** ${issueId}\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${pendingIssue.issueText}"\n\nIs issue ko solve karne ke liye support portal visit karein.`;
+        pendingIssues.delete(`${dockId}:${senderId}`);
+      } else if (pendingReport) {
         let targetIssuesDockId = null;
         try {
           const res = await aero.joinDock("CPXBZM");
@@ -3386,8 +3513,13 @@ IMPORTANT:
         reply = "❌ You don't have any pending report to confirm.";
       }
     } else if (cmdName === "no") {
+      const pendingIssue = pendingIssues.get(`${dockId}:${senderId}`);
       const pendingReport = pendingUserReports.get(senderId);
-      if (pendingReport) {
+      
+      if (pendingIssue) {
+        reply = `❌ Issue registration cancelled.`;
+        pendingIssues.delete(`${dockId}:${senderId}`);
+      } else if (pendingReport) {
         reply = `❌ Report cancelled.`;
         pendingUserReports.delete(senderId);
       } else {
@@ -3614,8 +3746,64 @@ IMPORTANT:
   }
 });
 
+const getIssues = async () => json(200, { success: true, issues: issuesDbCache.issues });
+
+const solveIssue = async (req) => {
+  try {
+    const { issueId } = await readJson(req);
+    if (!issueId) return json(400, { error: "Missing issueId" });
+    
+    const issue = issuesDbCache.issues.find(i => i.id === issueId);
+    if (!issue) return json(404, { error: "Issue not found" });
+    
+    issue.status = "solved";
+    issue.resolvedAt = Date.now();
+    issue.resolvedBy = "Portal Admin";
+    
+    saveIssuesDb(issuesDbCache);
+    
+    // Broadcast via SSE
+    broadcastSseEvent("issue_updated", issue);
+    
+    // Send a message back to the group chat
+    try {
+      const notifyText = `✅ **[Issue Resolved]**\n\n🆔 **ID:** ${issue.id}\n👤 **User:** @${issue.username}\n📝 **Issue:** "${issue.text}"\n🛠️ **Status:** Solved by Admin via Portal.`;
+      await aero.sendMessage(issue.dockId, notifyText);
+    } catch (err) {
+      console.error(`[IssuesDB] Failed to send resolution message to dock ${issue.dockId}:`, err.message);
+    }
+    
+    return json(200, { success: true, issue });
+  } catch (err) {
+    return json(500, { error: err.message });
+  }
+};
+
+const issuesStream = async (req, url, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  res.write(":\n\n"); // send comment to establish stream
+  
+  const clientObj = { req, res };
+  sseClients.push(clientObj);
+  console.log(`[SSE] Client connected. Active streams: ${sseClients.length}`);
+  
+  req.on("close", () => {
+    sseClients = sseClients.filter(c => c !== clientObj);
+    console.log(`[SSE] Client disconnected. Active streams: ${sseClients.length}`);
+  });
+  
+  return null; // returning null prevents server from closing res
+};
+
 // Routes configuration
 const routes = {
+  "GET /api/issues": getIssues,
+  "POST /api/issues/solve": solveIssue,
+  "GET /api/issues/stream": issuesStream,
   "GET /api/health": health,
   "GET /health": health,
   "GET /healthz": health,
@@ -3710,12 +3898,25 @@ const server = http.createServer(async (req, res) => {
     if (route) {
       const openRoutes = ["/api/health", "/health", "/healthz", "/api/local-chat", "/api/local-chat/clear", "/api/debug/ytdlp"];
       if (!openRoutes.includes(url.pathname)) {
-        if (!verifyDashboardAuth(req)) {
-          console.warn(`[Auth] Unauthorized access attempt to ${req.method} ${url.pathname} from IP ${ip}`);
-          return send(res, json(401, { error: "Unauthorized. Invalid admin token." }));
+        if (url.pathname === "/api/issues/stream") {
+          const token = url.searchParams.get("token");
+          const expectedPassword = process.env.DASHBOARD_PASSWORD || process.env.AERO_PASSWORD;
+          if (expectedPassword && token !== expectedPassword) {
+            console.warn(`[Auth] Unauthorized SSE stream attempt from IP ${ip}`);
+            return send(res, json(401, { error: "Unauthorized. Invalid admin token." }));
+          }
+        } else {
+          if (!verifyDashboardAuth(req)) {
+            console.warn(`[Auth] Unauthorized access attempt to ${req.method} ${url.pathname} from IP ${ip}`);
+            return send(res, json(401, { error: "Unauthorized. Invalid admin token." }));
+          }
         }
       }
-      return send(res, await route(req, url));
+      const result = await route(req, url, res);
+      if (result) {
+        return send(res, result);
+      }
+      return;
     }
     return serveStatic(res, url.pathname);
   } catch (error) {
@@ -3762,6 +3963,21 @@ if (require.main === module) {
           console.log("[Firestore] User memories successfully loaded on startup.");
         } else {
           console.log("[Firestore] No user memories found in cloud.");
+        }
+
+        console.log("[Firestore] Fetching issues database on startup...");
+        const docIssues = await firestoreDb.collection("settings").doc("issues_database").get();
+        if (docIssues.exists) {
+          issuesDbCache = docIssues.data();
+          console.log(`[Firestore] Issues database loaded: ${issuesDbCache.issues?.length || 0} issues.`);
+          const dbPath = path.join(__dirname, "..", "db", "issues_database.json");
+          const dbDir = path.dirname(dbPath);
+          if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
+          }
+          fs.writeFileSync(dbPath, JSON.stringify(issuesDbCache, null, 2), "utf-8");
+        } else {
+          loadIssuesDb();
         }
       } catch (err) {
         console.error("[Firestore] Startup fetch failed:", err.message);
@@ -4352,7 +4568,42 @@ I will automatically log it as a task and keep you updated! 😊`;
         const cmdName = parsedCmd.name;
         const argsText = parsedCmd.argsText || "";
 
-        if (cmdName === "report") {
+        if (cmdName === "issue") {
+          const isSenderAdmin = await checkIsAdmin(webhookDockId, senderId);
+          if (!isSenderAdmin) {
+            reply = "❌ Permission denied. Only group administrators can register issues.";
+          } else {
+            const replyToMsg = body.replyToMessageId || body.replyTo || (body.message && (body.message.replyToMessageId || body.message.replyTo));
+            if (!replyToMsg) {
+              reply = "❌ Please reply to a message containing the issue description with **/issue**.";
+            } else {
+              const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+              const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+              
+              let parentUsername = "User";
+              if (parentSenderObj && typeof parentSenderObj === "object") {
+                parentUsername = parentSenderObj.username || parentSenderObj.fullName || "User";
+              } else if (parentSenderId) {
+                const details = await resolveSenderDetails(parentSenderId);
+                parentUsername = details.username || details.displayName || "User";
+              }
+              
+              const issueText = replyToMsg.text || "[Attachment/Media]";
+              const targetDockName = (targetDock && targetDock.name) || "Group Chat";
+              
+              pendingIssues.set(`${webhookDockId}:${senderId}`, {
+                issueText,
+                targetUserId: parentSenderId || "unknown",
+                targetUsername: parentUsername,
+                dockName: targetDockName,
+                adminUsername: senderUsername || senderName,
+                timestamp: Date.now()
+              });
+              
+              reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, ya reject karne ke liye **/no** reply karein.`;
+            }
+          }
+        } else if (cmdName === "report") {
           const reason = argsText || "";
           if (!reason) {
             reply = "Please specify the report complaint. E.g. `/report Spam in chat`";
@@ -4366,8 +4617,35 @@ I will automatically log it as a task and keep you updated! 😊`;
             reply = `⚠️ @${senderName}, please confirm your report by replying with **/yes** or **/no**.\n\n⚠️ **WARNING**: Agar koi faltu ka message ya bemtlb ka message hua to vo id ban ya terminate ka cause ban sakta he.`;
           }
         } else if (cmdName === "yes") {
+          const pendingIssue = pendingIssues.get(`${webhookDockId}:${senderId}`);
           const pendingReport = pendingUserReports.get(senderId);
-          if (pendingReport) {
+          
+          if (pendingIssue) {
+            const issueId = `ISSUE-${issuesDbCache.nextIssueId++}`;
+            const newIssue = {
+              id: issueId,
+              text: pendingIssue.issueText,
+              dockId: webhookDockId,
+              dockName: pendingIssue.dockName,
+              userId: pendingIssue.targetUserId,
+              username: pendingIssue.targetUsername,
+              adminId: senderId,
+              adminUsername: pendingIssue.adminUsername,
+              status: "pending",
+              createdAt: Date.now(),
+              resolvedAt: null,
+              resolvedBy: null
+            };
+            
+            issuesDbCache.issues.push(newIssue);
+            saveIssuesDb(issuesDbCache);
+            
+            // Broadcast via SSE
+            broadcastSseEvent("issue_created", newIssue);
+            
+            reply = `✅ **[Issue Registered]**\n\n🆔 **ID:** ${issueId}\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${pendingIssue.issueText}"\n\nIs issue ko solve karne ke liye support portal visit karein.`;
+            pendingIssues.delete(`${webhookDockId}:${senderId}`);
+          } else if (pendingReport) {
             let targetIssuesDockId = null;
             try {
               const res = await aero.joinDock("CPXBZM");
@@ -4416,8 +4694,13 @@ I will automatically log it as a task and keep you updated! 😊`;
             reply = "❌ You don't have any pending report to confirm.";
           }
         } else if (cmdName === "no") {
+          const pendingIssue = pendingIssues.get(`${webhookDockId}:${senderId}`);
           const pendingReport = pendingUserReports.get(senderId);
-          if (pendingReport) {
+          
+          if (pendingIssue) {
+            reply = `❌ Issue registration cancelled.`;
+            pendingIssues.delete(`${webhookDockId}:${senderId}`);
+          } else if (pendingReport) {
             reply = `❌ Report cancelled.`;
             pendingUserReports.delete(senderId);
           } else {
