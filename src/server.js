@@ -479,7 +479,56 @@ function findMemberByUsername(groupSettings, username) {
       return { id: uid, ...m };
     }
   }
-  return null;
+}
+
+async function resolveSenderDetails(senderId) {
+  if (!senderId || senderId === "unknown") {
+    return { username: "unknown", displayName: "User" };
+  }
+  if (senderId === "owner-1") {
+    return { username: "owner-1", displayName: "Owner" };
+  }
+  if (senderId === "system") {
+    return { username: "system", displayName: "System" };
+  }
+
+  // 1. Check local DB members cache across all groups
+  const db = loadGroupDb();
+  for (const dockId in db.groups) {
+    const g = db.groups[dockId];
+    if (g.members && g.members[senderId]) {
+      const m = g.members[senderId];
+      if (m.username && m.username !== "User" && m.username !== "Unknown User" && !m.username.includes("(@")) {
+        return {
+          username: m.username,
+          displayName: m.displayName || m.fullName || m.username
+        };
+      }
+    }
+  }
+
+  // 2. Fetch from Aero API
+  try {
+    const profile = await aero.getUser(senderId);
+    if (profile) {
+      return {
+        username: profile.username || "unknown",
+        displayName: profile.fullName || profile.username || "User"
+      };
+    }
+  } catch (err) {
+    console.error(`[ResolveSenderDetails] API error for ${senderId}:`, err.message);
+  }
+
+  return { username: "unknown", displayName: "User" };
+}
+
+async function resolveSenderName(senderId) {
+  const details = await resolveSenderDetails(senderId);
+  if (details.username && details.username !== "unknown") {
+    return `${details.displayName} (@${details.username})`;
+  }
+  return details.displayName || "User";
 }
 
 async function generateImageBase64(prompt) {
@@ -1171,7 +1220,14 @@ aero.onMessage(async (msg) => {
     setTimeout(() => processedMessagesCache.delete(msgId), 5 * 60 * 1000);
   }
 
-  const { senderId, senderName } = extractSenderInfo(msg);
+  let { senderId, senderName } = extractSenderInfo(msg);
+  let senderUsername = "unknown";
+  if (senderId && senderId !== "unknown") {
+    const details = await resolveSenderDetails(senderId);
+    senderName = details.displayName;
+    senderUsername = details.username;
+  }
+  const formattedSenderName = senderUsername !== "unknown" ? `${senderName} (@${senderUsername})` : senderName;
   const botUserId = aero.user?._id || aero.user?.id;
   
   const sender = msg.sender || msg.senderId;
@@ -1179,8 +1235,8 @@ aero.onMessage(async (msg) => {
     ...(typeof sender === "object" ? sender : {}),
     id: senderId,
     _id: senderId,
-    username: (typeof sender === "object" ? sender.username : null) || senderName,
-    displayName: (typeof sender === "object" ? sender.displayName : null) || senderName
+    username: senderUsername !== "unknown" ? senderUsername : senderName,
+    displayName: senderName
   };
 
   if (botUserId && senderId === botUserId) {
@@ -1203,7 +1259,7 @@ aero.onMessage(async (msg) => {
     }
   }
 
-  console.log(`[SocketMessage] Received from ${senderName} (${senderId}) in dock ${dockId}: ${text}`);
+  console.log(`[SocketMessage] Received from ${formattedSenderName} (${senderId}) in dock ${dockId}: ${text}`);
 
   // Custom Issues & Suggestions Dock Automation Hook
   if (dockId === "69a43abb194fafb2e19317fa") {

@@ -177,6 +177,32 @@ class AeroAPI {
     }
   }
 
+  /**
+   * Fetch a single dock's complete metadata (including member list)
+   */
+  async getDock(dockId) {
+    try {
+      const data = await this._get(`/docks/${dockId}`);
+      return data;
+    } catch (err) {
+      console.error(`[AeroAPI] Failed to fetch dock ${dockId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch a single user's profile by userId
+   */
+  async getUser(userId) {
+    try {
+      const data = await this._get(`/users/${userId}`);
+      return data;
+    } catch (err) {
+      console.error(`[AeroAPI] Failed to fetch user ${userId}:`, err.message);
+      return null;
+    }
+  }
+
   async sendMessage(dockId, text, image = null, isGroup = null, document = null, attachment = null) {
     let cleanText = text;
     if (typeof cleanText === "string") {
