@@ -3768,7 +3768,7 @@ const solveIssue = async (req) => {
     // Send a message back to the group chat
     try {
       const notifyText = `✅ **[Issue Resolved]**\n\n🆔 **ID:** ${issue.id}\n👤 **User:** @${issue.username}\n📝 **Issue:** "${issue.text}"\n🛠️ **Status:** Solved by Admin via Portal.`;
-      await aero.sendMessage(issue.dockId, notifyText);
+      await aero.sendMessage(issue.dockId, notifyText, null, true);
     } catch (err) {
       console.error(`[IssuesDB] Failed to send resolution message to dock ${issue.dockId}:`, err.message);
     }
