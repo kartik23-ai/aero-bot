@@ -2057,7 +2057,6 @@ Valid actions are:
    - "greetingEnabled" (value: true or false)
    - "greetingMessage" (value: string text)
    - "aiModel" (value: string name of model, e.g. "groq", "cerebras")
-   - "aiSlowmodeSec" (value: number of seconds)
    - "botDisabled" (value: true or false)
    - "systemPromptExtension" (value: string description of AI personality/persona)
    - "bannedWords_add" (value: string word to blacklist)
@@ -2086,6 +2085,9 @@ JSON Output Format:
 }
 
 CRITICAL RULES:
+- Never extract or use "aiSlowmodeSec" setting. If the user mentions slowmode or cooldown (e.g. "slowmode set kar 15s", "slowmode off kar", "slowmode band kar"), it is ALWAYS group chat/dock slowmode (slowmodeSchedule).
+- For disabling slowmode ("slowmode off", "slowmode band", etc.), use setting: "slowmodeSchedule" with value: { seconds: 0, durationMinutes: 0 }.
+- If the user specifies a slowmode duration in seconds but does not specify a timeline in minutes, default durationMinutes to 60.
 - If the user specifies a change, extract it accurately. E.g., "awara group me bot ko ek funny shayar bana de" -> action: "change_setting", dockQuery: "awara", setting: "systemPromptExtension", value: "funny shayar".
 - If the user asks for logs of a specific user in a group: E.g., "yamdut ne dead chat me kya changes kiye" -> action: "view_logs", dockQuery: "dead chat", userFilter: "yamdut".
 - Return ONLY the raw JSON object. Do not wrap in markdown code blocks, do not write explanations. Just return the JSON object.`;
@@ -2304,12 +2306,15 @@ Available configurations they can request:
 5. Configure warning limits (max warnings) and threshold actions (mute, kick, ban).
 6. Update group rules text and primary language (english, hindi, hinglish).
 7. Manage custom command triggers (e.g. /rules, /insta).
-8. Enable slowmode or scheduled slowmode.
+8. Enable/disable chat slowmode or scheduled slowmode (Note: AI response slowmode is NOT supported from DM, this is purely for the group chat's slowmode which restricts member message frequency).
 9. View activity/config change logs (optionally filtered by a specific username).
 
 Your instructions:
 - Respond in Hinglish.
 - Be helpful, concise, and friendly.
+- When explaining how to change slowmode:
+  * Guide them on how to enable it, change it, or turn it off/disable it (e.g. "awara me slowmode band kar", "slowmode in awara 15s").
+  * Remind them that this sets the group chat slowmode (message limit for members) and that AI slowmode is not managed via DM.
 - When explaining how to change greetings:
   * Explicitly guide them on how to turn it ON or OFF. Provide clear examples like:
     "Greeting switch on/off karne ke liye simply likhein:
