@@ -1611,7 +1611,7 @@ I will automatically log it as a task and keep you updated! 😊`;
     // Admin DM control and conversational guide AI
     const isDev = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
     await refreshDocksIfNeeded(true);
-    const adminDocks = isDev ? (aero.docks || []) : (aero.docks || []).filter(d => 
+    const adminDocks = (aero.docks || []).filter(d => 
       d.creatorId === senderId || (d.admins && d.admins.includes(senderId))
     );
 
@@ -2118,12 +2118,19 @@ CRITICAL RULES:
 
           if (parsed.action === "change_setting" && parsed.setting) {
             const targetQuery = parsed.dockQuery || "";
-            const targetDock = adminDocks.find(d => 
+            // Find target dock in all docks the bot is in
+            const targetDock = (aero.docks || []).find(d => 
               d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
             );
 
-            if (!targetDock) {
-              await aero.sendMessage(dockId, `❓ **Aap kis group/dock me ye change karna chahte hain?**\n\nHumne aapka change detect kiya hai, lekin correct group nahi mila. Reply karein group ke name ke sath, jaise:\n` + adminDocks.map(d => `- **${d.name}**`).join("\n"));
+            if (targetDock) {
+              const isUserAdmin = targetDock.creatorId === senderId || (targetDock.admins && targetDock.admins.includes(senderId));
+              if (!isUserAdmin) {
+                await aero.sendMessage(dockId, `❌ Aap group "${targetDock.name}" ke admin/owner nahi hain. Aap sirf un groups ke settings change kar sakte hain jisme aap admin ya owner hain.`);
+                return;
+              }
+            } else {
+              await aero.sendMessage(dockId, `❓ Aap kis group/dock me ye change karna chahte hain?\n\nHumne aapka change detect kiya hai, lekin correct group nahi mila. Reply karein group ke name ke sath, jaise:\n` + adminDocks.map(d => `- ${d.name}`).join("\n"));
               return;
             }
 
@@ -2214,12 +2221,19 @@ Reply karein **yes** (ya **/yes**) confirm karne ke liye, ya **no** (ya **/no**)
           
           if (parsed.action === "view_logs") {
             const targetQuery = parsed.dockQuery || "";
-            const targetDock = adminDocks.find(d => 
+            // Find target dock in all docks the bot is in
+            const targetDock = (aero.docks || []).find(d => 
               d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
             );
 
-            if (!targetDock) {
-              await aero.sendMessage(dockId, `❓ **Aap kis group/dock ke logs dekhna chahte hain?**\n\nReply karein group name ke sath, jaise:\n` + adminDocks.map(d => `- **${d.name}**`).join("\n"));
+            if (targetDock) {
+              const isUserAdmin = targetDock.creatorId === senderId || (targetDock.admins && targetDock.admins.includes(senderId));
+              if (!isUserAdmin) {
+                await aero.sendMessage(dockId, `❌ Aap group "${targetDock.name}" ke admin/owner nahi hain. Aap sirf un groups ke logs dekh sakte hain jisme aap admin ya owner hain.`);
+                return;
+              }
+            } else {
+              await aero.sendMessage(dockId, `❓ Aap kis group/dock ke logs dekhna chahte hain?\n\nReply karein group name ke sath, jaise:\n` + adminDocks.map(d => `- ${d.name}`).join("\n"));
               return;
             }
 
