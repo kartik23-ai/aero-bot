@@ -95,30 +95,8 @@ class YtMusicService {
           continue;
         }
 
-        // 4. Extra unrequested words check (e.g. user asks for "tu hai kahan", returns "tu hai kahan 2")
-        const cleanTitleWords = titleLower.replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 0);
-        let hasExtraUnrequestedWords = false;
-        const ignoreWords = [
-          "song", "mp3", "music", "audio", "download", "official", "video", 
-          "from", "the", "motion", "picture", "soundtrack", "ost", "single", 
-          "lyrics", "full", "album", "original", "track", "theme"
-        ];
-        for (const word of cleanTitleWords) {
-          if (ignoreWords.includes(word)) continue;
-          
-          const wordInQuery = cleanQueryWords.includes(word) || 
-            (word === "kahaan" && cleanQueryWords.includes("kahan")) || 
-            (word === "kahan" && cleanQueryWords.includes("kahaan"));
-            
-          if (!wordInQuery && !artistLower.includes(word)) {
-            hasExtraUnrequestedWords = true;
-            break;
-          }
-        }
-        if (hasExtraUnrequestedWords) {
-          console.log(`[YtMusicService] Skipping JioSaavn result "${title}" because it contains extra unrequested words.`);
-          continue;
-        }
+        // Removed extra unrequested words check to prevent false-skips
+
 
         // 5. Relevance check: verify that all significant query words are present in title or artist
         let isRelevant = true;
@@ -139,17 +117,8 @@ class YtMusicService {
           continue;
         }
 
-        // 6. Play count threshold for popular songs (Skip extremely low play counts if artist is not specified)
-        let queryContainsArtist = false;
-        if (artistLower) {
-          const artistWords = artistLower.split(/[\s,]+/).filter(w => w.length > 2);
-          queryContainsArtist = artistWords.some(aw => queryLower.includes(aw));
-        }
+        // Removed play count check to avoid false-skips
 
-        if (playCount > 0 && playCount < 15000 && !queryContainsArtist) {
-          console.log(`[YtMusicService] Skipping low play count JioSaavn result: "${title}" (${playCount} plays)`);
-          continue;
-        }
 
         const encryptedUrl = song.more_info?.encrypted_media_url;
         if (encryptedUrl) {
@@ -182,27 +151,24 @@ class YtMusicService {
     const mp3File = path.join(tempDir, `${fileId}.mp3`);
 
     try {
-      // Step 1: Download direct URL via Axios Stream
-      console.log(`[YtMusicService] Downloading JioSaavn direct CDN via Axios...`);
+      // Step 1: Download direct URL via Curl
+      console.log(`[YtMusicService] Downloading JioSaavn direct CDN via Curl...`);
       await new Promise((resolve, reject) => {
-        axios.get(cdnUrl, {
-          responseType: "stream",
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        const curlBin = process.platform === "win32" ? "curl.exe" : "curl";
+        execFile(curlBin, [
+          "-L",
+          "-o", rawFile,
+          "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          cdnUrl
+        ], { timeout: 60000 }, (err, stdout, stderr) => {
+          if (err) {
+            return reject(new Error(`Curl CDN download failed: ${err.message}`));
           }
-        }).then(res => {
-          const writer = fs.createWriteStream(rawFile);
-          res.data.pipe(writer);
-          writer.on("finish", () => {
-            if (!fs.existsSync(rawFile) || fs.statSync(rawFile).size < 1000) {
-              return reject(new Error("Axios downloaded empty/too-small file"));
-            }
-            console.log(`[YtMusicService] Axios download done: ${fs.statSync(rawFile).size} bytes`);
-            resolve();
-          });
-          writer.on("error", (writeErr) => reject(writeErr));
-        }).catch(err => {
-          reject(new Error(`Axios CDN download failed: ${err.message}`));
+          if (!fs.existsSync(rawFile) || fs.statSync(rawFile).size < 1000) {
+            return reject(new Error("Curl downloaded empty/too-small file"));
+          }
+          console.log(`[YtMusicService] Curl download done: ${fs.statSync(rawFile).size} bytes`);
+          resolve();
         });
       });
 
@@ -303,10 +269,10 @@ class YtMusicService {
       const bin = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
       const args = [
         "--no-check-certificates",
-        "--impersonate", "chrome",
-        "--retries", "0",
-        "--fragment-retries", "0",
-        "--socket-timeout", "8",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--retries", "3",
+        "--fragment-retries", "3",
+        "--socket-timeout", "15",
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", "5",

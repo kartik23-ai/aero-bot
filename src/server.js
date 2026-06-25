@@ -1823,7 +1823,10 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 2: greeting
-      if (lowerText.startsWith("/greeting ") || lowerText.startsWith("greeting ")) {
+      const isGreetingCmd = lowerText === "/greeting" || lowerText === "greeting" || 
+                           lowerText.startsWith("/greeting ") || 
+                           (lowerText.startsWith("greeting ") && ["on", "off", "enable", "disable"].includes(trimmedText.split(/\s+/)[2]?.toLowerCase()));
+      if (isGreetingCmd) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         const status = parts[2]?.toLowerCase();
@@ -1853,7 +1856,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 3: setgreeting
-      if (lowerText.startsWith("/setgreeting ") || lowerText.startsWith("setgreeting ")) {
+      if (lowerText === "/setgreeting" || lowerText === "setgreeting" || lowerText.startsWith("/setgreeting ") || lowerText.startsWith("setgreeting ")) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         if (!targetQuery) {
@@ -1885,7 +1888,13 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 4: logs
-      if (lowerText.startsWith("/logs ") || lowerText.startsWith("logs ")) {
+      const isLogsCmd = lowerText === "/logs" || lowerText === "logs" || 
+                        lowerText.startsWith("/logs ") || 
+                        (lowerText.startsWith("logs ") && adminDocks.some(d => {
+                          const target = trimmedText.split(/\s+/)[1]?.toLowerCase();
+                          return target && (d.id.toLowerCase() === target || d.name.toLowerCase().includes(target));
+                        }));
+      if (isLogsCmd) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         
@@ -1923,7 +1932,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 5: broadcast
-      if (lowerText.startsWith("/broadcast ") || lowerText.startsWith("broadcast ")) {
+      if (lowerText === "/broadcast" || lowerText === "broadcast" || lowerText.startsWith("/broadcast ") || lowerText.startsWith("broadcast ")) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         if (!targetQuery) {
@@ -1985,7 +1994,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 6: createcommand
-      if (lowerText.startsWith("/createcommand ") || lowerText.startsWith("createcommand ")) {
+      if (lowerText === "/createcommand" || lowerText === "createcommand" || lowerText.startsWith("/createcommand ") || lowerText.startsWith("createcommand ")) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         const trigger = parts[2];
@@ -2027,7 +2036,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 7: deletecommand
-      if (lowerText.startsWith("/deletecommand ") || lowerText.startsWith("deletecommand ")) {
+      if (lowerText === "/deletecommand" || lowerText === "deletecommand" || lowerText.startsWith("/deletecommand ") || lowerText.startsWith("deletecommand ")) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         const trigger = parts[2];
@@ -2059,7 +2068,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
 
       // Command 8: slowmode_schedule
-      if (lowerText.startsWith("/slowmode_schedule ") || lowerText.startsWith("slowmode_schedule ")) {
+      if (lowerText === "/slowmode_schedule" || lowerText === "slowmode_schedule" || lowerText.startsWith("/slowmode_schedule ") || lowerText.startsWith("slowmode_schedule ")) {
         const parts = trimmedText.split(/\s+/);
         const targetQuery = parts[1];
         const secondsStr = parts[2];
@@ -2196,18 +2205,12 @@ CRITICAL RULES:
 
           if (parsed.action === "change_setting" && parsed.setting) {
             const targetQuery = parsed.dockQuery || "";
-            // Find target dock in all docks the bot is in
-            const targetDock = (aero.docks || []).find(d => 
+            // Find target dock only in docks the user manages
+            const targetDock = adminDocks.find(d => 
               d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
             );
 
-            if (targetDock) {
-              const isUserAdmin = targetDock.creatorId === senderId || (targetDock.admins && targetDock.admins.includes(senderId));
-              if (!isUserAdmin) {
-                await aero.sendMessage(dockId, `❌ Aap group "${targetDock.name}" ke admin/owner nahi hain. Aap sirf un groups ke settings change kar sakte hain jisme aap admin ya owner hain.`);
-                return;
-              }
-            } else {
+            if (!targetDock) {
               await aero.sendMessage(dockId, `❓ Aap kis group/dock me ye change karna chahte hain?\n\nHumne aapka change detect kiya hai, lekin correct group nahi mila. Reply karein group ke name ke sath, jaise:\n` + adminDocks.map(d => `- ${d.name}`).join("\n"));
               return;
             }
@@ -2312,18 +2315,12 @@ Reply karein **yes** (ya **/yes**) confirm karne ke liye, ya **no** (ya **/no**)
           
           if (parsed.action === "view_logs") {
             const targetQuery = parsed.dockQuery || "";
-            // Find target dock in all docks the bot is in
-            const targetDock = (aero.docks || []).find(d => 
+            // Find target dock only in docks the user manages
+            const targetDock = adminDocks.find(d => 
               d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
             );
 
-            if (targetDock) {
-              const isUserAdmin = targetDock.creatorId === senderId || (targetDock.admins && targetDock.admins.includes(senderId));
-              if (!isUserAdmin) {
-                await aero.sendMessage(dockId, `❌ Aap group "${targetDock.name}" ke admin/owner nahi hain. Aap sirf un groups ke logs dekh sakte hain jisme aap admin ya owner hain.`);
-                return;
-              }
-            } else {
+            if (!targetDock) {
               await aero.sendMessage(dockId, `❓ Aap kis group/dock ke logs dekhna chahte hain?\n\nReply karein group name ke sath, jaise:\n` + adminDocks.map(d => `- ${d.name}`).join("\n"));
               return;
             }
@@ -2438,15 +2435,31 @@ Your instructions:
 
     if (text) {
       try {
-        const paperclipMsg = { ...msg, text: text };
-        paperclipMsg.recallContext = getRecallContextAllGroups(text);
-        const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64);
-        if (result.image) {
-          await aero.sendMessage(dockId, result.text, result.image);
-        } else {
-          await aero.sendMessage(dockId, result.text);
+        const systemPrompt = `You are Aero Bot, a friendly and helpful AI assistant for Aero Messenger.
+You are talking to a user in a Direct Message (DM).
+IMPORTANT:
+- Respond in natural, friendly Hinglish.
+- Keep your response text-only (no markdown formatting of images/videos, no audio generation).
+- Answer questions helpfully, chat naturally, and guide the user if they ask about how to use the bot.
+- You do NOT support play, draw, meme, or admin command changes in DM. You are here for normal text chat and guidance.`;
+
+        const recallContext = getRecallContextAllGroups(text);
+        const messages = [
+          { role: "system", content: systemPrompt }
+        ];
+        if (recallContext) {
+          messages.push({ role: "system", content: `Here is some context from the user's groups that might help you answer:\n${recallContext}` });
         }
-        queueAssistantReply(dockId, result.text, "dm_reply");
+        messages.push({ role: "user", content: text });
+
+        const completion = await providers.chatCompletion(messages, {
+          model: "default",
+          max_tokens: 300,
+          temperature: 0.7
+        });
+
+        const replyText = completion.choices[0].message.content || "";
+        await aero.sendMessage(dockId, replyText);
 
         // Track DM AI requests
         const dmSettings = getGroupSettings(db, dockId);
@@ -3644,7 +3657,8 @@ const routes = {
   "GET /api/control-centre/token-usage": getTokenUsageEndpoint,
   "GET /api/control-centre/memory": getControlCentreMemory,
   "POST /api/control-centre/memory/clear": clearControlCentreMemory,
-  "POST /api/control-centre/keys/verify": verifyControlCentreKeys
+  "POST /api/control-centre/keys/verify": verifyControlCentreKeys,
+  "GET /api/debug/ytdlp": debugYtdlp
 };
 
 function verifyDashboardAuth(req) {
@@ -3693,7 +3707,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const route = routes[`${req.method} ${url.pathname}`];
     if (route) {
-      const openRoutes = ["/api/health", "/health", "/healthz", "/api/local-chat", "/api/local-chat/clear"];
+      const openRoutes = ["/api/health", "/health", "/healthz", "/api/local-chat", "/api/local-chat/clear", "/api/debug/ytdlp"];
       if (!openRoutes.includes(url.pathname)) {
         if (!verifyDashboardAuth(req)) {
           console.warn(`[Auth] Unauthorized access attempt to ${req.method} ${url.pathname} from IP ${ip}`);
@@ -6407,6 +6421,22 @@ function triggerChatsSave() {
 // ============================================================================
 // AI CONTROL CENTRE ENDPOINTS
 // ============================================================================
+
+async function debugYtdlp(req) {
+  const { exec } = require("node:child_process");
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const cmd = url.searchParams.get("cmd") || "yt-dlp --version";
+  return new Promise((resolve) => {
+    exec(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
+      resolve(json(200, {
+        cmd,
+        err: err ? err.message : null,
+        stdout: stdout,
+        stderr: stderr
+      }));
+    });
+  });
+}
 
 async function getControlCentreGroups(req) {
   const db = loadGroupDb();
