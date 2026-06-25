@@ -4168,6 +4168,25 @@ if (require.main === module) {
         } else {
           loadIssuesDb();
         }
+
+        // Auto-migrate old absolute Aero URLs to local uploads
+        if (issuesDbCache && Array.isArray(issuesDbCache.issues)) {
+          let migratedAny = false;
+          for (const issue of issuesDbCache.issues) {
+            if (issue.image && issue.image.includes("aryankaushik.space/docks/")) {
+              console.log(`[Migration] Migrating old image URL for ${issue.id}: ${issue.image}`);
+              const localPath = await downloadAndSaveIssueImage(issue.image);
+              if (localPath) {
+                issue.image = localPath;
+                migratedAny = true;
+              }
+            }
+          }
+          if (migratedAny) {
+            console.log(`[Migration] Successfully migrated old issue images. Saving database...`);
+            saveIssuesDb(issuesDbCache);
+          }
+        }
       } catch (err) {
         console.error("[Firestore] Startup fetch failed:", err.message);
       }
