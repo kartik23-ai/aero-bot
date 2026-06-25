@@ -1208,6 +1208,26 @@ aero.onTaskStatusChanged(async (data) => {
   }
 });
 
+// Outbound Message Listener to record what the bot sends in the recall cache
+aero.onMessageSent((msg) => {
+  let content = msg.text || "";
+  if (msg.image) {
+    content += " [Image/Meme]";
+  }
+  if (msg.attachment) {
+    content += " [Attachment/Audio]";
+  }
+  if (msg.document) {
+    content += " [Document]";
+  }
+  saveMessageToFile(msg.dockId, {
+    senderId: aero.user?._id || aero.user?.id || "bot",
+    senderName: aero.user?.username || aero.user?.fullName || "bot",
+    text: content.trim(),
+    timestamp: msg.timestamp || new Date().toISOString()
+  });
+});
+
 // Socket Message Listener
 aero.onMessage(async (msg) => {
   const msgId = msg.id || msg._id || msg.messageId;
@@ -2418,7 +2438,9 @@ Your instructions:
 
     if (text) {
       try {
-        const result = await PaperclipEngine.process(msg, generateImageBase64);
+        const paperclipMsg = { ...msg, text: text };
+        paperclipMsg.recallContext = getRecallContextAllGroups(text);
+        const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64);
         if (result.image) {
           await aero.sendMessage(dockId, result.text, result.image);
         } else {
@@ -3532,6 +3554,7 @@ Your instructions:
         } else {
           try {
             const paperclipMsg = { ...msg, text: question };
+            paperclipMsg.recallContext = getRecallContext(dockId, question);
             const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
             reply = result.text;
             if (result.image) {
@@ -4176,6 +4199,12 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
       saveGroupDb(db);
       if (textToProcess) {
+        saveMessageToFile(webhookDockId, {
+          senderId,
+          senderName,
+          text: textToProcess,
+          timestamp: new Date().toISOString()
+        });
         await processAfkInteractions(db, webhookDockId, senderId, senderName, textToProcess);
       }
     }
@@ -4280,6 +4309,7 @@ I will automatically log it as a task and keep you updated! 😊`;
           } else {
             try {
               const paperclipMsg = { ...msg, text: question };
+              paperclipMsg.recallContext = getRecallContext(webhookDockId, question);
               const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
               reply = result.text;
               if (result.image) {
@@ -6319,6 +6349,14 @@ function saveMessageToFile(dockId, message) {
       chatsCache[dockId] = [];
     }
     chatsCache[dockId].push(message);
+    
+    // Prune messages older than 48 hours to restrict recall duration
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    chatsCache[dockId] = chatsCache[dockId].filter(m => {
+      const ts = new Date(m.timestamp).getTime();
+      return ts >= cutoff;
+    });
+
     if (chatsCache[dockId].length > 1000) {
       chatsCache[dockId].shift();
     }
@@ -6470,6 +6508,111 @@ async function verifyControlCentreKeys(req) {
     return json(200, { cached: false, timestamp: now, keys: results });
   } catch (err) {
     return json(500, { error: "Verification failed: " + err.message });
+  }
+}
+
+// Stop words to filter out before running keyword search on chat history
+const recallStopwords = new Set([
+  "sun", "kya", "tha", "hai", "he", "ho", "se", "ne", "me", "ko", "de", "ke", "ka", "ki", "kuch",
+  "aur", "ya", "thi", "tum", "main", "hum", "aap", "hi", "hello", "bot", "please", "batao", "puche",
+  "pucha", "bol", "bola", "kisne", "kuch", "kaha", "kahata", "remember", "recall", "find", "search",
+  "about", "what", "who", "when", "said", "did", "was", "the", "and", "for", "you", "that", "jo", "bheja",
+  "dikhao", "bata", "gaya", "ga", "ge", "gi", "gaye"
+]);
+
+function getRecallContext(dockId, userQuery) {
+  try {
+    const cache = loadChatsCacheIfNeeded();
+    const msgs = cache[dockId] || [];
+    if (msgs.length === 0) return "";
+
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    const last48hMsgs = msgs.filter(m => new Date(m.timestamp).getTime() >= cutoff);
+    if (last48hMsgs.length === 0) return "";
+
+    // Tokenize the user query and extract keywords
+    const words = userQuery
+      .toLowerCase()
+      .replace(/[^\w\s\u0900-\u097F]/g, "") // English + Hindi/Devanagari characters
+      .split(/\s+/)
+      .filter(w => w.length > 1 && !recallStopwords.has(w));
+
+    console.log(`[RecallEngine] Dock: ${dockId}, Query: "${userQuery}", Keywords:`, words);
+
+    // If no keywords matched, default to the last 35 messages
+    if (words.length === 0) {
+      const recent = last48hMsgs.slice(-35);
+      return recent.map(m => {
+        const timeStr = new Date(m.timestamp).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' });
+        return `[${timeStr}] ${m.senderName}: ${m.text}`;
+      }).join("\n");
+    }
+
+    // Match messages containing any of the keywords
+    const matchedIndices = new Set();
+    last48hMsgs.forEach((m, idx) => {
+      const textLower = (m.text || "").toLowerCase();
+      const senderLower = (m.senderName || "").toLowerCase();
+      
+      const isMatch = words.some(word => textLower.includes(word) || senderLower.includes(word));
+      if (isMatch) {
+        matchedIndices.add(idx);
+      }
+    });
+
+    // Expand search results to include a window of 2 messages before/after
+    const finalIndices = new Set();
+    matchedIndices.forEach(idx => {
+      for (let i = Math.max(0, idx - 2); i <= Math.min(last48hMsgs.length - 1, idx + 2); i++) {
+        finalIndices.add(i);
+      }
+    });
+
+    const sortedIndices = Array.from(finalIndices).sort((a, b) => a - b);
+    
+    // Fall back to recent 35 if zero matches found
+    if (sortedIndices.length === 0) {
+      const recent = last48hMsgs.slice(-35);
+      return recent.map(m => {
+        const timeStr = new Date(m.timestamp).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' });
+        return `[${timeStr}] ${m.senderName}: ${m.text}`;
+      }).join("\n");
+    }
+
+    // Limit context to the last 50 matches to keep token footprint low
+    const limitedIndices = sortedIndices.slice(-50);
+
+    return limitedIndices.map(idx => {
+      const m = last48hMsgs[idx];
+      const date = new Date(m.timestamp);
+      const timeStr = date.toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' });
+      const dateStr = date.toLocaleDateString("en-IN", { day: 'numeric', month: 'short' });
+      return `[${dateStr} ${timeStr}] ${m.senderName}: ${m.text}`;
+    }).join("\n");
+
+  } catch (err) {
+    console.error("[RecallEngine] Error generating context:", err.message);
+    return "";
+  }
+}
+
+function getRecallContextAllGroups(userQuery) {
+  try {
+    const cache = loadChatsCacheIfNeeded();
+    let allContext = "";
+    for (const dockId in cache) {
+      const ctx = getRecallContext(dockId, userQuery);
+      if (ctx && ctx.trim().length > 0) {
+        // Find group name
+        const db = loadGroupDb();
+        const groupName = db.groups?.[dockId]?.groupName || dockId;
+        allContext += `\n[From Group: ${groupName}]:\n${ctx}\n`;
+      }
+    }
+    return allContext.trim();
+  } catch (err) {
+    console.error("[RecallEngine] Error searching all groups:", err.message);
+    return "";
   }
 }
 

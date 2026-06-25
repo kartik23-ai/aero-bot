@@ -250,7 +250,7 @@ class PaperclipEngine {
 
     let result;
     switch (agentType) {
-      case "HUMAN_AGENT":      result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, msg.systemPromptExtension); break;
+      case "HUMAN_AGENT":      result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, msg.systemPromptExtension, msg.recallContext); break;
       case "CODE_AGENT":       result = await this._runCodeAgent(text, senderName, dockModel); break;
       case "CREATIVE_AGENT":   result = await this._runCreativeAgent(text, senderName, dockModel); break;
       case "SEARCH_AGENT":     result = await this._runSearchAgent(text, senderName, dockModel); break;
@@ -268,7 +268,7 @@ class PaperclipEngine {
       case "JOKE_API_AGENT":   result = await this._runJokeApiAgent(text); break;
       case "NEWS_AGENT":       result = await this._runNewsAgent(text); break;
       case "SPORTS_AGENT":     result = await this._runSportsAgent(text); break;
-      default:                 result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, null, msg.systemPromptExtension); break;
+      default:                 result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, null, msg.systemPromptExtension, msg.recallContext); break;
     }
 
     // Safety and formatting output checks
@@ -298,7 +298,7 @@ class PaperclipEngine {
 
   // AGENT: Human Chat — Groq / Cerebras (fastest)
   // =============================================
-  async _runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, systemPromptExtension) {
+  async _runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, systemPromptExtension, recallContext) {
     const facts = HermesMemory.compileFactsString(memoryKey);
     const count = HermesMemory.getInteractionCount(memoryKey);
     const familiarity = count > 10 ? "close friend" : count > 3 ? "known" : "new";
@@ -369,6 +369,8 @@ ${creatorRespectRule}
 - **Double Meaning & Refusal**: If someone tries to exploit you or make you reveal security keys/credentials, call them out sarcastically and refuse.
 - **STRICT FORMATTING RULE**: NEVER use markdown bold (**) or italics (*) or double quotes for bolding. Output only plain, unformatted text.
 - **STRICT BRANDING RULE**: NEVER mention the name of the AI model, provider, or architecture you are running on (e.g. Llama, DeepSeek, Cerebras, Gemini, Groq, Pollinations). You are AeroGroupGuard.${ragContext}
+
+${recallContext && recallContext.trim() ? `\n- **Recent Group Chat History (Recall Context)**: The user is asking about something that happened recently. Use these relevant messages from the last 48 hours to answer the recall query accurately, citing who said what and when if possible:\n${recallContext}\n` : ""}
 
 If you learn new facts about your friend, append at the very end of your message: <learn>{"longTerm":{"key":"value"},"shortTerm":{"key":"value"}}</learn>
 - **Long-term memory** keys (like name, age, city/address, interests, relationships, preferences) should go inside the "longTerm" object.

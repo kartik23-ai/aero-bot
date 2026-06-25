@@ -15,6 +15,7 @@ class AeroAPI {
     this.docks = [];
     this.socket = null;
     this.messageListeners = [];
+    this.messageSentListeners = [];
     this.taskStatusListeners = [];
     this._refreshTimer = null;
     this._connected = false;
@@ -279,6 +280,24 @@ class AeroAPI {
           this._lastMessageSentTime = sentTime;
           this._sentMessageTimestamps.push(sentTime);
           item.resolve(res.data);
+
+          // Trigger message sent listeners
+          if (this.messageSentListeners) {
+            for (const listener of this.messageSentListeners) {
+              try {
+                listener({
+                  dockId: item.dockId,
+                  text: item.text,
+                  image: item.image,
+                  attachment: item.attachment,
+                  document: item.document,
+                  timestamp: new Date(sentTime).toISOString()
+                });
+              } catch (err) {
+                console.error("[AeroAPI] Error in messageSentListener:", err.message);
+              }
+            }
+          }
         } catch (err) {
           console.error(`[AeroAPI] [Outbound Queue] Failed to send message:`, err.message);
           // If it is a 429 Too Many Requests, put it back at the front and pause the queue
@@ -360,7 +379,8 @@ class AeroAPI {
    * Fetch messages from a dock
    */
   async getMessages(dockId, limit = 50) {
-    return await this._get(`/docks/${dockId}/messages?limit=${limit}`);
+    const res = await this._get(`/docks/${dockId}/messages?limit=${limit}`);
+    return Array.isArray(res) ? res : (res?.messages || []);
   }
 
   /**
@@ -587,6 +607,13 @@ class AeroAPI {
    */
   onMessage(callback) {
     this.messageListeners.push(callback);
+  }
+
+  /**
+   * Register a callback for outgoing messages
+   */
+  onMessageSent(callback) {
+    this.messageSentListeners.push(callback);
   }
 
   /**
