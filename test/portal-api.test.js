@@ -306,6 +306,97 @@ test("webhook processes interactive report command, warning, yes and no confirma
   }
 });
 
+test("webhook processes /issue command with image and text attachments", async () => {
+  const { baseUrl, close } = await startServer();
+  try {
+    // 1. Send /issue in reply to a message with text and a relative image URL
+    const initRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/issue",
+        sender: { id: "owner-1", username: "admin" },
+        replyToMessageId: {
+          senderId: { username: "anshika05", id: "user-anshi" },
+          text: "Mujhe to ye ajeeb lagta he",
+          image: "docks/6a098ac946dc268297b10e39/v/933cc1a436c2edde/sd.webp"
+        }
+      })
+    });
+    const initBody = await initRes.json();
+    assert.equal(initRes.status, 200);
+    assert.match(initBody.reply, /kya aap is issue ko register karna chahte hain/);
+    assert.match(initBody.reply, /Mujhe to ye ajeeb lagta he/);
+
+    // 2. Confirm the issue via /yes
+    const confirmRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/yes",
+        sender: { id: "owner-1", username: "admin" }
+      })
+    });
+    const confirmBody = await confirmRes.json();
+    assert.equal(confirmRes.status, 200);
+    assert.match(confirmBody.reply, /Ye issue portal par post ho chuka hai/);
+
+    // 3. Verify it was stored in the issues database
+    const issuesRes = await fetch(`${baseUrl}/api/issues`, {
+      headers: { "authorization": "Bearer kartik124" }
+    });
+    const issuesData = await issuesRes.json();
+    const createdIssue = issuesData.issues.find(i => i.text === "Mujhe to ye ajeeb lagta he");
+    assert.ok(createdIssue);
+    // Relative image path should have been converted to absolute
+    assert.equal(createdIssue.image, "https://api.aryankaushik.space/docks/6a098ac946dc268297b10e39/v/933cc1a436c2edde/sd.webp");
+
+    // 4. Test image-only issue (no text caption, only image in attachment)
+    const imgOnlyRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/issue",
+        sender: { id: "owner-1", username: "admin" },
+        replyToMessageId: {
+          senderId: { username: "anshika05", id: "user-anshi" },
+          attachment: {
+            url: "docks/6a098ac946dc268297b10e39/v/933cc1a436c2edde/sd.webp",
+            type: "image",
+            mimeType: "image/jpeg"
+          }
+        }
+      })
+    });
+    const imgOnlyBody = await imgOnlyRes.json();
+    assert.equal(imgOnlyRes.status, 200);
+    assert.match(imgOnlyBody.reply, /\[Image Attachment\]/);
+
+    // Confirm the image-only issue
+    const confirmImgOnlyRes = await fetch(`${baseUrl}/api/webhooks/aero`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        eventType: "message",
+        groupId: "group-1",
+        text: "/yes",
+        sender: { id: "owner-1", username: "admin" }
+      })
+    });
+    const confirmImgOnlyBody = await confirmImgOnlyRes.json();
+    assert.equal(confirmImgOnlyRes.status, 200);
+    assert.match(confirmImgOnlyBody.reply, /Ye issue portal par post ho chuka hai/);
+  } finally {
+    await close();
+  }
+});
+
 function startServer() {
   return new Promise((resolve) => {
     const listener = server.listen(0, () => {

@@ -1058,6 +1058,89 @@ async function downloadAttachmentAsBuffer(attachmentUrl) {
   return null;
 }
 
+async function resolveReplyMessage(dockId, replyToMsg) {
+  if (!replyToMsg) return null;
+  
+  const isString = typeof replyToMsg === "string";
+  const hasSender = typeof replyToMsg === "object" && (replyToMsg.senderId || replyToMsg.sender);
+  const hasContent = typeof replyToMsg === "object" && (
+    replyToMsg.text !== undefined || 
+    replyToMsg.image !== undefined || 
+    replyToMsg.attachment !== undefined || 
+    replyToMsg.attachments !== undefined
+  );
+  
+  if (!isString && hasSender && hasContent) {
+    return replyToMsg;
+  }
+  
+  const targetId = isString ? replyToMsg : (replyToMsg.id || replyToMsg._id || replyToMsg.messageId);
+  if (!targetId) return typeof replyToMsg === "object" ? replyToMsg : null;
+  
+  try {
+    console.log(`[ResolveReply] Fetching messages to resolve replied message ID ${targetId} in dock ${dockId}...`);
+    const messages = await aero.getMessages(dockId, 100);
+    const found = messages.find(m => (m.id || m._id) === targetId);
+    if (found) {
+      console.log(`[ResolveReply] Successfully found replied message:`, found.text || "[Media]");
+      return found;
+    }
+  } catch (err) {
+    console.error(`[ResolveReply] Failed to resolve message via API:`, err.message);
+  }
+  
+  return typeof replyToMsg === "object" ? replyToMsg : null;
+}
+
+function extractIssueImage(replyToMsg) {
+  if (!replyToMsg) return null;
+  
+  let rawUrl = null;
+  
+  // 1. Direct image property
+  if (replyToMsg.image) {
+    rawUrl = replyToMsg.image;
+  }
+  // 2. Singular attachment object
+  else if (replyToMsg.attachment && typeof replyToMsg.attachment === "object") {
+    const a = replyToMsg.attachment;
+    if (a.type === "image" || (a.mimeType && a.mimeType.startsWith("image/")) || (a.url && /\.(png|jpe?g|webp|gif)$/i.test(a.url))) {
+      rawUrl = a.url || a.path;
+    }
+  }
+  // 3. Plural attachments array
+  else if (replyToMsg.attachments && Array.isArray(replyToMsg.attachments)) {
+    const imgAttachment = replyToMsg.attachments.find(a => 
+      a.type === "image" || 
+      (a.mimeType && a.mimeType.startsWith("image/")) ||
+      (a.url && /\.(png|jpe?g|webp|gif)$/i.test(a.url))
+    );
+    if (imgAttachment) {
+      rawUrl = imgAttachment.url || imgAttachment.path;
+    }
+  }
+  
+  if (rawUrl) {
+    if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://") || rawUrl.startsWith("data:")) {
+      return rawUrl;
+    }
+    return `https://api.aryankaushik.space/${rawUrl.replace(/^\//, "")}`;
+  }
+  
+  return null;
+}
+
+function extractIssueText(replyToMsg) {
+  if (!replyToMsg) return "";
+  if (replyToMsg.text) return replyToMsg.text;
+  
+  const hasImage = !!extractIssueImage(replyToMsg);
+  if (hasImage) {
+    return "[Image Attachment]";
+  }
+  return "[Attachment/Media]";
+}
+
 async function processMessageAttachments(msg) {
   let imgUrl = null;
   let audioUrl = null;
@@ -1079,6 +1162,15 @@ async function processMessageAttachments(msg) {
     if (audioAttachment) {
       audioUrl = audioAttachment.url || audioAttachment.path;
       audioMime = audioAttachment.mimeType || "audio/ogg";
+    }
+  } else if (msg.attachment && typeof msg.attachment === "object") {
+    const a = msg.attachment;
+    if (a.type === "image" || (a.mimeType && a.mimeType.startsWith("image/")) || (a.filename && /\.(png|jpe?g|webp)$/i.test(a.filename))) {
+      imgUrl = a.url || a.path;
+    }
+    if (a.type === "audio" || (a.mimeType && a.mimeType.startsWith("audio/")) || (a.filename && /\.(mp3|wav|ogg|m4a|aac)$/i.test(a.filename))) {
+      audioUrl = a.url || a.path;
+      audioMime = a.mimeType || "audio/ogg";
     }
   } else {
     if (msg.image) imgUrl = msg.image;
@@ -3357,47 +3449,41 @@ IMPORTANT:
       if (!isSenderAdmin) {
         reply = "❌ Permission denied. Only group administrators can register issues.";
       } else {
-        const replyToMsg = msg.replyToMessageId || msg.replyTo;
-        if (!replyToMsg) {
+        const replyToMsgRaw = msg.replyToMessageId || msg.replyTo;
+        if (!replyToMsgRaw) {
           reply = "❌ Please reply to a message containing the issue description with **/issue**.";
         } else {
-          const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
-          const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
-          
-          let parentUsername = "User";
-          if (parentSenderObj && typeof parentSenderObj === "object") {
-            parentUsername = parentSenderObj.username || parentSenderObj.fullName || "User";
-          } else if (parentSenderId) {
-            const details = await resolveSenderDetails(parentSenderId);
-            parentUsername = details.username || details.displayName || "User";
-          }
-          
-          const issueText = replyToMsg.text || "[Attachment/Media]";
-          const targetDockName = (targetDock && targetDock.name) || "Group Chat";
-          
-          let issueImage = null;
-          if (replyToMsg.image) {
-            issueImage = replyToMsg.image;
-          } else if (replyToMsg.attachments && Array.isArray(replyToMsg.attachments)) {
-            const imgAttachment = replyToMsg.attachments.find(a => 
-              a.type === "image" || (a.mimeType && a.mimeType.startsWith("image/"))
-            );
-            if (imgAttachment) {
-              issueImage = imgAttachment.url || imgAttachment.path;
+          const replyToMsg = await resolveReplyMessage(dockId, replyToMsgRaw);
+          if (!replyToMsg) {
+            reply = "❌ Please reply to a message containing the issue description with **/issue**.";
+          } else {
+            const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+            const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+            
+            let parentUsername = "User";
+            if (parentSenderObj && typeof parentSenderObj === "object") {
+              parentUsername = parentSenderObj.username || parentSenderObj.fullName || "User";
+            } else if (parentSenderId) {
+              const details = await resolveSenderDetails(parentSenderId);
+              parentUsername = details.username || details.displayName || "User";
             }
+            
+            const issueText = extractIssueText(replyToMsg);
+            const targetDockName = (targetDock && targetDock.name) || "Group Chat";
+            const issueImage = extractIssueImage(replyToMsg);
+            
+            pendingIssues.set(`${dockId}:${senderId}`, {
+              issueText,
+              targetUserId: parentSenderId || "unknown",
+              targetUsername: parentUsername,
+              dockName: targetDockName,
+              adminUsername: senderUsername || senderName,
+              image: issueImage,
+              timestamp: Date.now()
+            });
+            
+            reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
           }
-          
-          pendingIssues.set(`${dockId}:${senderId}`, {
-            issueText,
-            targetUserId: parentSenderId || "unknown",
-            targetUsername: parentUsername,
-            dockName: targetDockName,
-            adminUsername: senderUsername || senderName,
-            image: issueImage,
-            timestamp: Date.now()
-          });
-          
-          reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
         }
       }
     } else if (cmdName === "play") {
@@ -4213,6 +4299,7 @@ async function webhook(req) {
     displayName: (typeof sender === "object" ? sender.displayName : null) || senderName,
     role: (typeof sender === "object" ? sender.role : null) || body.role || "member"
   };
+  const senderUsername = senderObj.username || senderName;
 
   const webhookDockId = body.groupId || "unknown";
 
@@ -4625,53 +4712,48 @@ I will automatically log it as a task and keep you updated! 😊`;
       if (parsedCmd) {
         const cmdName = parsedCmd.name;
         const argsText = parsedCmd.argsText || "";
+        const targetDock = aero.docks.find(d => d.id === webhookDockId);
 
         if (cmdName === "issue") {
           const isSenderAdmin = await checkIsAdmin(webhookDockId, senderId);
           if (!isSenderAdmin) {
             reply = "❌ Permission denied. Only group administrators can register issues.";
           } else {
-            const replyToMsg = body.replyToMessageId || body.replyTo || (body.message && (body.message.replyToMessageId || body.message.replyTo));
-            if (!replyToMsg) {
+            const replyToMsgRaw = body.replyToMessageId || body.replyTo || (body.message && (body.message.replyToMessageId || body.message.replyTo));
+            if (!replyToMsgRaw) {
               reply = "❌ Please reply to a message containing the issue description with **/issue**.";
             } else {
-              const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
-              const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
-              
-              let parentUsername = "User";
-              if (parentSenderObj && typeof parentSenderObj === "object") {
-                parentUsername = parentSenderObj.username || parentSenderObj.fullName || "User";
-              } else if (parentSenderId) {
-                const details = await resolveSenderDetails(parentSenderId);
-                parentUsername = details.username || details.displayName || "User";
-              }
-              
-              const issueText = replyToMsg.text || "[Attachment/Media]";
-              const targetDockName = (targetDock && targetDock.name) || "Group Chat";
-              
-              let issueImage = null;
-              if (replyToMsg.image) {
-                issueImage = replyToMsg.image;
-              } else if (replyToMsg.attachments && Array.isArray(replyToMsg.attachments)) {
-                const imgAttachment = replyToMsg.attachments.find(a => 
-                  a.type === "image" || (a.mimeType && a.mimeType.startsWith("image/"))
-                );
-                if (imgAttachment) {
-                  issueImage = imgAttachment.url || imgAttachment.path;
+              const replyToMsg = await resolveReplyMessage(webhookDockId, replyToMsgRaw);
+              if (!replyToMsg) {
+                reply = "❌ Please reply to a message containing the issue description with **/issue**.";
+              } else {
+                const parentSenderObj = replyToMsg.senderId || replyToMsg.sender;
+                const parentSenderId = typeof parentSenderObj === "object" ? (parentSenderObj?._id || parentSenderObj?.id) : parentSenderObj;
+                
+                let parentUsername = "User";
+                if (parentSenderObj && typeof parentSenderObj === "object") {
+                  parentUsername = parentSenderObj.username || parentSenderObj.fullName || "User";
+                } else if (parentSenderId) {
+                  const details = await resolveSenderDetails(parentSenderId);
+                  parentUsername = details.username || details.displayName || "User";
                 }
+                
+                const issueText = extractIssueText(replyToMsg);
+                const targetDockName = (targetDock && targetDock.name) || "Group Chat";
+                const issueImage = extractIssueImage(replyToMsg);
+                
+                pendingIssues.set(`${webhookDockId}:${senderId}`, {
+                  issueText,
+                  targetUserId: parentSenderId || "unknown",
+                  targetUsername: parentUsername,
+                  dockName: targetDockName,
+                  adminUsername: senderUsername || senderName,
+                  image: issueImage,
+                  timestamp: Date.now()
+                });
+                
+                reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
               }
-              
-              pendingIssues.set(`${webhookDockId}:${senderId}`, {
-                issueText,
-                targetUserId: parentSenderId || "unknown",
-                targetUsername: parentUsername,
-                dockName: targetDockName,
-                adminUsername: senderUsername || senderName,
-                image: issueImage,
-                timestamp: Date.now()
-              });
-              
-              reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
             }
           }
         } else if (cmdName === "report") {
