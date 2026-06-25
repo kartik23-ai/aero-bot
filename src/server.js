@@ -2134,6 +2134,19 @@ CRITICAL RULES:
               return;
             }
 
+            if (parsed.setting === "greetingMessage" && parsed.value) {
+              let cleanedVal = String(parsed.value);
+              // Multi-word placeholders first
+              cleanedVal = cleanedVal.replace(/\b(group name|dock name)\b/gi, "{groupname}");
+              cleanedVal = cleanedVal.replace(/\b(member name|user name)\b/gi, "{name}");
+              // Single-word placeholders next
+              cleanedVal = cleanedVal.replace(/\b(group|dock)\b/gi, "{groupname}");
+              cleanedVal = cleanedVal.replace(/\b(user|username|member|naam)\b/gi, "{name}");
+              // Cleanup bracket issues
+              cleanedVal = cleanedVal.replace(/{+/g, "{").replace(/}+/g, "}");
+              parsed.value = cleanedVal;
+            }
+
             let displayText = "";
             let previewText = "";
             const val = parsed.value;
@@ -2297,6 +2310,14 @@ Available configurations they can request:
 Your instructions:
 - Respond in Hinglish.
 - Be helpful, concise, and friendly.
+- When explaining how to change greetings:
+  * Explicitly guide them on how to turn it ON or OFF. Provide clear examples like:
+    "Greeting switch on/off karne ke liye simply likhein:
+    👉 'awara me greeting on kar' ya 'awara me greeting off kar'"
+  * Explain how to update/change the greeting welcome message:
+    "Custom greeting message change karne ke liye likhein:
+    👉 'awara me greeting change kar hey user welcome to group name'"
+  * Explicitly tell them: "Aap message me normal words jaise 'user', 'member', 'group name' ya 'dock name' likh sakte hain, bot unhe automatically {name} aur {groupname} ke technical templates me replace kar dega taaki actual welcome message me user ka tag aur group ka name sahi se populate ho ske!"
 - Keep the conversation strictly focused on guiding them. Tell them they can simply state what they want to change in their groups (e.g. "awara me rules badal do" or "dead chat ke yamdut ke logs dikha").`;
 
           const messages = [
