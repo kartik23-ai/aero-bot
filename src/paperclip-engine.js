@@ -90,23 +90,26 @@ class PaperclipEngine {
     for (const kw of stockKw) if (n.includes(kw)) return "STOCK_AGENT";
 
     // 7. Dictionary
-    const dictKw = ["meaning of", "define ", "definition", "matlab kya", "ka matlab", "kya matlab", "dictionary", "word meaning", "shabd ka arth", "meaning", "define", "matlab", "vocab", "shabd arth"];
+    const dictKw = ["meaning of", "definition of", "dictionary meaning", "word meaning", "shabd ka arth", "shabd arth"];
     for (const kw of dictKw) if (n.includes(kw)) return "DICTIONARY_AGENT";
+    if (/\b(dictionary|definition)\b/i.test(n)) return "DICTIONARY_AGENT";
+    if (/^define\s+\w+/i.test(n)) return "DICTIONARY_AGENT";
 
     // 8. Movies/TV
-    const movieKw = ["movie", "film", "netflix", "imdb", "rating of", "review of", "kaisi hai movie", "trailer", "cast of", "movie review", "rating", "review", "cast", "director", "kabir singh", "jawan", "pathaan", "sholay", "bahubali"];
+    const movieKw = ["movie", "film", "netflix", "imdb", "movie rating", "movie review", "film rating", "film review", "kaisi hai movie", "movie trailer", "cast of movie", "kabir singh", "jawan", "pathaan", "sholay", "bahubali"];
     for (const kw of movieKw) if (n.includes(kw)) return "MOVIE_AGENT";
+    if (/\b(movie|film|netflix|imdb)\b/i.test(n)) return "MOVIE_AGENT";
 
     // 9. Recipe/Food
     const recipeKw = ["recipe", "how to cook", "kaise banaye", "kaise banta", "banane ki vidhi", "ingredients", "recipe of", "khana bana", "recipies", "cook", "dish"];
     for (const kw of recipeKw) if (n.includes(kw)) return "RECIPE_AGENT";
 
     // 10. Country Info
-    const countryKw = ["country info", "population of", "capital of", "country data", "desh ki jankari", "desh ke baare", "country", "population", "capital"];
+    const countryKw = ["country info", "population of", "capital of", "country data", "desh ki jankari", "desh ke baare"];
     for (const kw of countryKw) if (n.includes(kw)) return "COUNTRY_AGENT";
 
     // 11. Book Info
-    const bookKw = ["book ", "kitab", "novel", "author of", "writer of", "pustak", "author", "writer", "books"];
+    const bookKw = ["book ", "kitab", "novel", "author of", "writer of", "pustak"];
     for (const kw of bookKw) if (n.includes(kw)) return "BOOK_AGENT";
 
 
@@ -128,8 +131,9 @@ class PaperclipEngine {
     for (const kw of newsKw) if (n.includes(kw)) return "NEWS_AGENT";
 
     // 17. Sports
-    const sportsKw = ["cricket score", "football score", "match score", "live score", "ipl score", "sports", "cricket", "football", "score", "match"];
+    const sportsKw = ["cricket score", "football score", "match score", "live score", "ipl score", "live ipl", "match ka score"];
     for (const kw of sportsKw) if (n.includes(kw)) return "SPORTS_AGENT";
+    if (/\b(cricket|ipl|football|kabaddi)\b/i.test(n) && /\b(score|live|match|match score|result)\b/i.test(n)) return "SPORTS_AGENT";
 
     // 18. Story/Creative
     const creativeKw = ["story", "kahani", "joke", "chutkula", "funny", "sunao",
@@ -139,9 +143,9 @@ class PaperclipEngine {
     for (const kw of creativeKw) if (n.includes(kw)) return "CREATIVE_AGENT";
 
     // 19. Web Search
-    const searchKw = ["search", "google", "latest", "kya hua",
-      "kaun hai", "what is", "who is", "kab hai", "kaha hai", "trending", "update", "result"];
+    const searchKw = ["google search", "search on google", "search internet", "web search", "search for", "google par search", "internet par search", "google se pooch", "search kr", "search kar", "search engine", "find on google", "google it", "google kr", "google kar"];
     for (const kw of searchKw) if (n.includes(kw)) return "SEARCH_AGENT";
+    if (/\b(google|search|duckduckgo)\b/i.test(n)) return "SEARCH_AGENT";
 
     // 20. Default — Human Chat
     return "HUMAN_AGENT";
