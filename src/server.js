@@ -1395,6 +1395,14 @@ I will automatically log it as a task and keep you updated! 😊`;
       return;
     }
 
+    const isCancelSetup = ["cancel", "/cancel", "exit", "/exit", "abort"].includes(text.trim().toLowerCase());
+    if (isCancelSetup && setupState) {
+      delete db.setupState[senderId];
+      saveGroupDb(db);
+      await aero.sendMessage(dockId, `❌ **Setup cancelled.** Setup state has been cleared. You can now use conversational DM commands!`);
+      return;
+    }
+
     if (setupState && setupState.step) {
 
     // Step 1: Awaiting Language Choice
