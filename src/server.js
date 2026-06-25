@@ -3372,6 +3372,9 @@ IMPORTANT:
             parentUsername = details.username || details.displayName || "User";
           }
           
+          const issueText = replyToMsg.text || "[Attachment/Media]";
+          const targetDockName = (targetDock && targetDock.name) || "Group Chat";
+          
           let issueImage = null;
           if (replyToMsg.image) {
             issueImage = replyToMsg.image;
