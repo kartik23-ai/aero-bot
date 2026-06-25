@@ -333,6 +333,20 @@ function broadcastSseEvent(event, data) {
   }
 }
 
+// Keep SSE connections alive by sending a periodic heartbeat ping
+const sseHeartbeatInterval = setInterval(() => {
+  for (const client of sseClients) {
+    try {
+      client.res.write(": ping\n\n");
+    } catch (err) {
+      // ignore client errors
+    }
+  }
+}, 20000);
+if (sseHeartbeatInterval.unref) {
+  sseHeartbeatInterval.unref();
+}
+
 function loadIssuesDb() {
   const dbPath = path.join(__dirname, "..", "db", "issues_database.json");
   try {
@@ -3942,7 +3956,8 @@ const issuesStream = async (req, url, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
-    "Connection": "keep-alive"
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
   });
   res.write(":\n\n"); // send comment to establish stream
   

@@ -855,9 +855,14 @@
     function initializePortal() {
       fetchIssues();
       setupSSE();
+
+      // Start background polling fallback (every 10 seconds)
+      setInterval(() => {
+        fetchIssues(true);
+      }, 10000);
     }
 
-    function fetchIssues() {
+    function fetchIssues(isBackground = false) {
       fetch(`${apiBase}/api/issues`, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -872,13 +877,48 @@
       })
       .then(data => {
         if (data && data.success) {
-          issues = data.issues || [];
-          renderDashboard();
+          const newIssues = data.issues || [];
+          
+          if (isBackground) {
+            let changed = false;
+            if (newIssues.length !== issues.length) {
+              changed = true;
+            } else {
+              for (let i = 0; i < newIssues.length; i++) {
+                const ni = newIssues[i];
+                const oi = issues.find(x => x.id === ni.id);
+                if (!oi || oi.status !== ni.status || oi.text !== ni.text || oi.image !== ni.image) {
+                  changed = true;
+                  break;
+                }
+              }
+            }
+
+            if (changed) {
+              // Show toasts for newly added issues or solved issues in the background poll
+              newIssues.forEach(ni => {
+                const old = issues.find(oi => oi.id === ni.id);
+                if (!old) {
+                  showToast('info', 'New Issue Registered', `${ni.id} filed from ${ni.dockName || 'Group'}`);
+                } else if (old.status !== ni.status && ni.status === 'solved') {
+                  showToast('success', 'Issue Resolved', `${ni.id} has been marked solved.`);
+                }
+              });
+
+              issues = newIssues;
+              renderDashboard();
+            }
+          } else {
+            issues = newIssues;
+            renderDashboard();
+          }
         }
       })
       .catch(err => {
         console.error('Failed to fetch issues:', err);
-        showToast('danger', 'Sync Error', 'Failed to retrieve issues database.');
+        if (!isBackground) {
+          showToast('danger', 'Sync Error', 'Failed to retrieve issues database.');
+        }
       });
     }
 
