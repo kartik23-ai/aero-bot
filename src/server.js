@@ -3372,8 +3372,17 @@ IMPORTANT:
             parentUsername = details.username || details.displayName || "User";
           }
           
-          const issueText = replyToMsg.text || "[Attachment/Media]";
-          const targetDockName = (targetDock && targetDock.name) || "Group Chat";
+          let issueImage = null;
+          if (replyToMsg.image) {
+            issueImage = replyToMsg.image;
+          } else if (replyToMsg.attachments && Array.isArray(replyToMsg.attachments)) {
+            const imgAttachment = replyToMsg.attachments.find(a => 
+              a.type === "image" || (a.mimeType && a.mimeType.startsWith("image/"))
+            );
+            if (imgAttachment) {
+              issueImage = imgAttachment.url || imgAttachment.path;
+            }
+          }
           
           pendingIssues.set(`${dockId}:${senderId}`, {
             issueText,
@@ -3381,10 +3390,11 @@ IMPORTANT:
             targetUsername: parentUsername,
             dockName: targetDockName,
             adminUsername: senderUsername || senderName,
+            image: issueImage,
             timestamp: Date.now()
           });
           
-          reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, ya reject karne ke liye **/no** reply karein.`;
+          reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
         }
       }
     } else if (cmdName === "play") {
@@ -3448,6 +3458,7 @@ IMPORTANT:
           username: pendingIssue.targetUsername,
           adminId: senderId,
           adminUsername: pendingIssue.adminUsername,
+          image: pendingIssue.image || null,
           status: "pending",
           createdAt: Date.now(),
           resolvedAt: null,
@@ -3460,7 +3471,7 @@ IMPORTANT:
         // Broadcast via SSE
         broadcastSseEvent("issue_created", newIssue);
         
-        reply = `✅ **[Issue Registered]**\n\n🆔 **ID:** ${issueId}\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${pendingIssue.issueText}"\n\nIs issue ko solve karne ke liye support portal visit karein.`;
+        reply = `✅ **[Issue Registered]**\n\n🆔 **ID:** ${issueId}\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${pendingIssue.issueText}"\n\nYe issue portal par post ho chuka hai.`;
         pendingIssues.delete(`${dockId}:${senderId}`);
       } else if (pendingReport) {
         let targetIssuesDockId = null;
@@ -3524,6 +3535,20 @@ IMPORTANT:
         pendingUserReports.delete(senderId);
       } else {
         reply = "❌ You don't have any pending report to cancel.";
+      }
+
+    } else if (cmdName === "edit") {
+      const pendingIssue = pendingIssues.get(`${dockId}:${senderId}`);
+      if (pendingIssue) {
+        const newText = argsText.trim();
+        if (!newText) {
+          reply = `✏️ @${senderUsername || senderName}, copy this message, edit it, and send it back:\n\n\`/edit ${pendingIssue.issueText}\``;
+        } else {
+          pendingIssue.issueText = newText;
+          reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain (Edited):\n\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${newText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
+        }
+      } else {
+        reply = "❌ You don't have any pending issue to edit.";
       }
 
     } else if (["summary", "weeklysummary", "chatrecap", "recap"].includes(cmdName)) {
@@ -4621,16 +4646,29 @@ I will automatically log it as a task and keep you updated! 😊`;
               const issueText = replyToMsg.text || "[Attachment/Media]";
               const targetDockName = (targetDock && targetDock.name) || "Group Chat";
               
+              let issueImage = null;
+              if (replyToMsg.image) {
+                issueImage = replyToMsg.image;
+              } else if (replyToMsg.attachments && Array.isArray(replyToMsg.attachments)) {
+                const imgAttachment = replyToMsg.attachments.find(a => 
+                  a.type === "image" || (a.mimeType && a.mimeType.startsWith("image/"))
+                );
+                if (imgAttachment) {
+                  issueImage = imgAttachment.url || imgAttachment.path;
+                }
+              }
+              
               pendingIssues.set(`${webhookDockId}:${senderId}`, {
                 issueText,
                 targetUserId: parentSenderId || "unknown",
                 targetUsername: parentUsername,
                 dockName: targetDockName,
                 adminUsername: senderUsername || senderName,
+                image: issueImage,
                 timestamp: Date.now()
               });
               
-              reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, ya reject karne ke liye **/no** reply karein.`;
+              reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain:\n\n👤 **User:** @${parentUsername}\n📝 **Issue:** "${issueText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
             }
           }
         } else if (cmdName === "report") {
@@ -4661,6 +4699,7 @@ I will automatically log it as a task and keep you updated! 😊`;
               username: pendingIssue.targetUsername,
               adminId: senderId,
               adminUsername: pendingIssue.adminUsername,
+              image: pendingIssue.image || null,
               status: "pending",
               createdAt: Date.now(),
               resolvedAt: null,
@@ -4673,7 +4712,7 @@ I will automatically log it as a task and keep you updated! 😊`;
             // Broadcast via SSE
             broadcastSseEvent("issue_created", newIssue);
             
-            reply = `✅ **[Issue Registered]**\n\n🆔 **ID:** ${issueId}\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${pendingIssue.issueText}"\n\nIs issue ko solve karne ke liye support portal visit karein.`;
+            reply = `✅ **[Issue Registered]**\n\n🆔 **ID:** ${issueId}\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${pendingIssue.issueText}"\n\nYe issue portal par post ho chuka hai.`;
             pendingIssues.delete(`${webhookDockId}:${senderId}`);
           } else if (pendingReport) {
             let targetIssuesDockId = null;
@@ -4735,6 +4774,20 @@ I will automatically log it as a task and keep you updated! 😊`;
             pendingUserReports.delete(senderId);
           } else {
             reply = "❌ You don't have any pending report to cancel.";
+          }
+
+        } else if (cmdName === "edit") {
+          const pendingIssue = pendingIssues.get(`${webhookDockId}:${senderId}`);
+          if (pendingIssue) {
+            const newText = argsText.trim();
+            if (!newText) {
+              reply = `✏️ @${senderUsername || senderName}, copy this message, edit it, and send it back:\n\n\`/edit ${pendingIssue.issueText}\``;
+            } else {
+              pendingIssue.issueText = newText;
+              reply = `⚠️ @${senderUsername || senderName}, kya aap is issue ko register karna chahte hain (Edited):\n\n👤 **User:** @${pendingIssue.targetUsername}\n📝 **Issue:** "${newText}"\n\nConfirm karne ke liye **/yes** reply karein, edit karne ke liye **/edit <new text>**, ya reject karne ke liye **/no** reply karein.`;
+            }
+          } else {
+            reply = "❌ You don't have any pending issue to edit.";
           }
         } else if (cmdName === "draw") {
           if (!argsText) {
