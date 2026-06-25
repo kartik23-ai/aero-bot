@@ -413,9 +413,21 @@ function logConfigChange(db, dockId, userId, userName, changeDescription) {
   }
 }
 
+const memberAdminCheckCache = new Map(); // key: "dockId:userId", value: { isAdmin: boolean, expiresAt: number }
+
 async function checkIsAdmin(dockId, userId, forceRefresh = false) {
   if (!userId || !dockId) return false;
   if (userId === "owner-1") return true;
+
+  const cacheKey = `${dockId}:${userId}`;
+  const now = Date.now();
+  
+  if (!forceRefresh) {
+    const cached = memberAdminCheckCache.get(cacheKey);
+    if (cached && now < cached.expiresAt) {
+      return cached.isAdmin;
+    }
+  }
 
   try {
     if (forceRefresh) {
@@ -426,11 +438,37 @@ async function checkIsAdmin(dockId, userId, forceRefresh = false) {
     const dock = aero.docks.find(d => d.id === dockId);
     if (!dock) return false;
     
-    return dock.creatorId === userId || (dock.admins && dock.admins.includes(userId));
+    const isCachedAdmin = dock.creatorId === userId || (dock.admins && dock.admins.includes(userId));
+    if (isCachedAdmin) {
+      memberAdminCheckCache.set(cacheKey, { isAdmin: true, expiresAt: now + 5 * 60 * 1000 });
+      return true;
+    }
+    
+    // Fallback: query single member status from server (handles server-side admin list mismatches)
+    const member = await aero.getMember(dockId, userId);
+    const isAdmin = !!(member && (member.role === "admin" || member.role === "owner" || member.isAdmin === true));
+    
+    if (isAdmin) {
+      if (dock.admins && !dock.admins.includes(userId)) {
+        dock.admins.push(userId);
+      }
+    }
+    
+    memberAdminCheckCache.set(cacheKey, { isAdmin, expiresAt: now + 5 * 60 * 1000 });
+    return isAdmin;
   } catch (err) {
     console.error(`[AdminCheck] Failed to check admin status for ${userId} in ${dockId}:`, err.message);
     const dock = aero.docks.find(d => d.id === dockId);
-    return dock ? (dock.creatorId === userId || (dock.admins && dock.admins.includes(userId))) : false;
+    const isCachedAdmin = dock ? (dock.creatorId === userId || (dock.admins && dock.admins.includes(userId))) : false;
+    if (isCachedAdmin) return true;
+    
+    try {
+      const member = await aero.getMember(dockId, userId);
+      const isAdmin = !!(member && (member.role === "admin" || member.role === "owner" || member.isAdmin === true));
+      return isAdmin;
+    } catch (_) {
+      return false;
+    }
   }
 }
 
@@ -1687,9 +1725,27 @@ I will automatically log it as a task and keep you updated! 😊`;
     // Admin DM control and conversational guide AI
     const isDev = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
     await refreshDocksIfNeeded(true);
-    const adminDocks = (aero.docks || []).filter(d => 
-      d.creatorId === senderId || (d.admins && d.admins.includes(senderId))
-    );
+    
+    // Resolve admin status dynamically to handle server-side admin list mismatches
+    const adminDocks = [];
+    if (Array.isArray(aero.docks)) {
+      await Promise.all(aero.docks.map(async (d) => {
+        const isCached = d.creatorId === senderId || (d.admins && d.admins.includes(senderId));
+        if (isCached) {
+          adminDocks.push(d);
+        } else {
+          try {
+            const member = await aero.getMember(d.id, senderId);
+            if (member && (member.role === "admin" || member.role === "owner" || member.isAdmin === true)) {
+              if (d.admins && !d.admins.includes(senderId)) {
+                d.admins.push(senderId);
+              }
+              adminDocks.push(d);
+            }
+          } catch (_) {}
+        }
+      }));
+    }
 
     if (adminDocks.length > 0) {
       if (!db.dmSession) db.dmSession = {};
