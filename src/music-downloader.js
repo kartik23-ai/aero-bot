@@ -98,8 +98,13 @@ class YtMusicService {
         // 4. Extra unrequested words check (e.g. user asks for "tu hai kahan", returns "tu hai kahan 2")
         const cleanTitleWords = titleLower.replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 0);
         let hasExtraUnrequestedWords = false;
+        const ignoreWords = [
+          "song", "mp3", "music", "audio", "download", "official", "video", 
+          "from", "the", "motion", "picture", "soundtrack", "ost", "single", 
+          "lyrics", "full", "album", "original", "track", "theme"
+        ];
         for (const word of cleanTitleWords) {
-          if (["song", "mp3", "music", "audio", "download", "official", "video"].includes(word)) continue;
+          if (ignoreWords.includes(word)) continue;
           
           const wordInQuery = cleanQueryWords.includes(word) || 
             (word === "kahaan" && cleanQueryWords.includes("kahan")) || 
