@@ -204,14 +204,14 @@ class AeroAPI {
     }
   }
 
-  async sendMessage(dockId, text, image = null, isGroup = null, document = null, attachment = null) {
+  async sendMessage(dockId, text, image = null, isGroup = null, document = null, attachment = null, asVoiceNote = false) {
     let cleanText = text;
     if (typeof cleanText === "string") {
       // Remove double asterisks and single asterisks commonly used for bold/italics
       cleanText = cleanText.replace(/\*\*/g, "").replace(/\*/g, "");
     }
     return new Promise((resolve, reject) => {
-      this._messageQueue.push({ dockId, text: cleanText, image, isGroup, document, attachment, resolve, reject });
+      this._messageQueue.push({ dockId, text: cleanText, image, isGroup, document, attachment, asVoiceNote, resolve, reject });
       this._processQueue();
     });
   }
@@ -264,7 +264,7 @@ class AeroAPI {
             payload.image = item.image;
           }
           if (item.document) {
-            if (typeof item.document === "string" && item.document.startsWith("data:audio/") && !item.document.includes("name=")) {
+            if (item.asVoiceNote) {
               payload.audio = item.document;
             } else {
               payload.document = item.document;

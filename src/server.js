@@ -1980,7 +1980,7 @@ I will automatically log it as a task and keep you updated! 😊`;
             } else if (docUri) {
               await aero.sendMessage(tDock.id, broadcastText, null, null, docUri);
             } else if (voiceUri) {
-              await aero.sendMessage(tDock.id, broadcastText, null, null, voiceUri);
+              await aero.sendMessage(tDock.id, broadcastText, null, null, voiceUri, null, true);
             } else {
               await aero.sendMessage(tDock.id, broadcastText);
             }
@@ -3458,7 +3458,7 @@ IMPORTANT:
           
           // Send it directly as an audio attachment with custom filename
           const filename = `Voice_Note_${Date.now()}.mp3`;
-          await aero.sendMessage(dockId, `🎤 **Voice Response for @${senderName}**`, null, isGroup, base64Audio);
+          await aero.sendMessage(dockId, `🎤 **Voice Response for @${senderName}**`, null, isGroup, base64Audio, null, true);
           
           // Track AI request metrics for voice notes
           groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -4528,7 +4528,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                 const audioBuffer = await providers.generateTTSAudio(voiceText, "hi");
                 const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
                 const filename = `Voice_Note_${Date.now()}.mp3`;
-                await aero.sendMessage(webhookDockId, `🎤 **Voice Response for @${senderName}**`, null, true, base64Audio);
+                await aero.sendMessage(webhookDockId, `🎤 **Voice Response for @${senderName}**`, null, true, base64Audio, null, true);
                 groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                 saveGroupDb(db);
               } catch (err) {
