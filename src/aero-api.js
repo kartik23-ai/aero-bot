@@ -264,7 +264,11 @@ class AeroAPI {
             payload.image = item.image;
           }
           if (item.document) {
-            payload.document = item.document;
+            if (typeof item.document === "string" && item.document.startsWith("data:audio/")) {
+              payload.audio = item.document;
+            } else {
+              payload.document = item.document;
+            }
           }
           if (item.attachment) {
             payload.attachment = item.attachment;
