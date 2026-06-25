@@ -191,7 +191,7 @@ class YtMusicService {
       const fileBuffer = fs.readFileSync(mp3File);
       const base64Data = fileBuffer.toString("base64");
       console.log(`[YtMusicService] ✅ JioSaavn download+compress succeeded! Base64 length: ${base64Data.length}`);
-      return `data:audio/mpeg;name=${encodeURIComponent(filename)};base64,${base64Data}`;
+      return `data:audio/mp3;name=${encodeURIComponent(filename)};base64,${base64Data}`;
 
     } finally {
       // Cleanup temp files
@@ -291,7 +291,7 @@ class YtMusicService {
         if (fs.existsSync(expectedFilePath)) {
           try {
             const fileBuffer = fs.readFileSync(expectedFilePath);
-            const audioUri = `data:audio/mpeg;name=${encodeURIComponent(filename)};base64,${fileBuffer.toString("base64")}`;
+            const audioUri = `data:audio/mp3;name=${encodeURIComponent(filename)};base64,${fileBuffer.toString("base64")}`;
             fs.unlink(expectedFilePath, () => {});
             resolve(audioUri);
           } catch (readErr) {
@@ -305,7 +305,7 @@ class YtMusicService {
               const matchPath = path.join(tempDir, match);
               try {
                 const fileBuffer = fs.readFileSync(matchPath);
-                const audioUri = `data:audio/mpeg;name=${encodeURIComponent(filename)};base64,${fileBuffer.toString("base64")}`;
+                const audioUri = `data:audio/mp3;name=${encodeURIComponent(filename)};base64,${fileBuffer.toString("base64")}`;
                 fs.unlink(matchPath, () => {});
                 resolve(audioUri);
               } catch (err) { reject(err); }
