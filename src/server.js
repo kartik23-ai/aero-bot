@@ -363,7 +363,11 @@ function getGroupSettings(db, dockId) {
       configLogs: [],
       customCommands: {},
       afkUsers: {},
-      slowmodeSchedule: null
+      slowmodeSchedule: null,
+      systemPromptExtension: "",
+      bannedWords: [],
+      maxWarnings: 3,
+      warningAction: "mute"
     };
   }
   const g = db.groups[dockId];
@@ -388,6 +392,10 @@ function getGroupSettings(db, dockId) {
   if (g.customCommands === undefined) g.customCommands = {};
   if (g.afkUsers === undefined) g.afkUsers = {};
   if (g.slowmodeSchedule === undefined) g.slowmodeSchedule = null;
+  if (g.systemPromptExtension === undefined) g.systemPromptExtension = "";
+  if (g.bannedWords === undefined) g.bannedWords = [];
+  if (g.maxWarnings === undefined) g.maxWarnings = 3;
+  if (g.warningAction === undefined) g.warningAction = "mute";
   return g;
 }
 
@@ -1376,17 +1384,18 @@ I will automatically log it as a task and keep you updated! 😊`;
 
   // Handle DM Flow
   if (!isGroup) {
-    // If they explicitly type /setup or setup, clear setup state and re-initialize
-    const isResetSetup = text.trim().toLowerCase() === "/setup" || text.trim().toLowerCase() === "setup";
+    const isAddSetup = text.trim().toLowerCase() === "/add";
     let setupState = db.setupState?.[senderId];
 
-    if (isResetSetup || !setupState) {
+    if (isAddSetup) {
       if (!db.setupState) db.setupState = {};
       db.setupState[senderId] = { step: "awaiting_language" };
       saveGroupDb(db);
       await aero.sendMessage(dockId, `👋 Hello! Welcome to AeroGroupGuard setup. First, please select the default language for the group by replying to this DM with:\n- /lang english\n- /lang hindi\n- /lang hinglish`);
       return;
     }
+
+    if (setupState && setupState.step) {
 
     // Step 1: Awaiting Language Choice
     if (setupState.step === "awaiting_language") {
@@ -1590,6 +1599,7 @@ I will automatically log it as a task and keep you updated! 😊`;
       }
       return;
     }
+  }
     // Admin DM control and conversational guide AI
     const isDev = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
     await refreshDocksIfNeeded(true);
@@ -1598,6 +1608,119 @@ I will automatically log it as a task and keep you updated! 😊`;
     );
 
     if (adminDocks.length > 0) {
+      if (!db.dmSession) db.dmSession = {};
+      let dmSession = db.dmSession[senderId];
+      if (!dmSession) {
+        db.dmSession[senderId] = {};
+        dmSession = db.dmSession[senderId];
+      }
+
+      if (dmSession && dmSession.pendingChange) {
+        const cleanText = text.trim().toLowerCase();
+        if (cleanText === "/yes" || cleanText === "yes") {
+          const pc = dmSession.pendingChange;
+          
+          // Verify user still manages this dock for security
+          const matchesAdmin = adminDocks.some(d => d.id === pc.dockId);
+          if (!matchesAdmin) {
+            delete dmSession.pendingChange;
+            saveGroupDb(db);
+            await aero.sendMessage(dockId, "❌ Security alert: You no longer manage this group. Change cancelled.");
+            return;
+          }
+
+          const gSettings = getGroupSettings(db, pc.dockId);
+          let changeDesc = "";
+
+          if (pc.setting === "greetingEnabled") {
+            gSettings.greetingEnabled = pc.value;
+            changeDesc = `Greeting message turned ${pc.value ? 'ON' : 'OFF'}`;
+          } else if (pc.setting === "greetingMessage") {
+            gSettings.greetingMessage = pc.value;
+            changeDesc = `Greeting message updated to: "${pc.value}"`;
+          } else if (pc.setting === "aiModel") {
+            gSettings.aiModel = pc.value;
+            changeDesc = `AI Model routing updated to: ${pc.value}`;
+          } else if (pc.setting === "aiSlowmodeSec") {
+            gSettings.aiSlowmodeSec = pc.value;
+            changeDesc = `AI Slowmode seconds set to ${pc.value}s`;
+          } else if (pc.setting === "botDisabled") {
+            gSettings.botDisabled = pc.value;
+            changeDesc = `Bot turned ${pc.value ? 'OFF' : 'ON'} for this group`;
+          } else if (pc.setting === "systemPromptExtension") {
+            gSettings.systemPromptExtension = pc.value;
+            changeDesc = `AI Persona prompt extension updated to: "${pc.value}"`;
+          } else if (pc.setting === "rules") {
+            gSettings.rules = pc.value;
+            changeDesc = `Group rules updated to: "${pc.value}"`;
+          } else if (pc.setting === "language") {
+            gSettings.language = pc.value;
+            changeDesc = `Group language set to ${pc.value}`;
+          } else if (pc.setting === "maxWarnings") {
+            gSettings.maxWarnings = pc.value;
+            changeDesc = `Max warnings limit set to ${pc.value}`;
+          } else if (pc.setting === "warningAction") {
+            gSettings.warningAction = pc.value;
+            changeDesc = `Warning limit action updated to ${pc.value}`;
+          } else if (pc.setting === "customCommand_add") {
+            if (!gSettings.customCommands) gSettings.customCommands = {};
+            gSettings.customCommands[pc.trigger.toLowerCase()] = pc.value;
+            changeDesc = `Custom command ${pc.trigger} registered: "${pc.value}"`;
+          } else if (pc.setting === "customCommand_delete") {
+            if (gSettings.customCommands) {
+              delete gSettings.customCommands[pc.trigger.toLowerCase()];
+            }
+            changeDesc = `Custom command ${pc.trigger} deleted`;
+          } else if (pc.setting === "bannedWords_add") {
+            if (!gSettings.bannedWords) gSettings.bannedWords = [];
+            if (!gSettings.bannedWords.includes(pc.value.toLowerCase())) {
+              gSettings.bannedWords.push(pc.value.toLowerCase());
+            }
+            changeDesc = `Added "${pc.value}" to banned words list`;
+          } else if (pc.setting === "bannedWords_delete") {
+            if (gSettings.bannedWords) {
+              gSettings.bannedWords = gSettings.bannedWords.filter(w => w !== pc.value.toLowerCase());
+            }
+            changeDesc = `Removed "${pc.value}" from banned words list`;
+          } else if (pc.setting === "slowmodeSchedule") {
+            gSettings.slowmodeSeconds = pc.value.seconds;
+            if (pc.value.seconds === 0) {
+              gSettings.slowmodeSchedule = null;
+              changeDesc = `Slowmode disabled`;
+            } else {
+              const endTime = Date.now() + pc.value.durationMinutes * 60 * 1000;
+              gSettings.slowmodeSchedule = { seconds: pc.value.seconds, endTime };
+              changeDesc = `Slowmode scheduled to ${pc.value.seconds}s for ${pc.value.durationMinutes} minutes`;
+            }
+          }
+
+          saveGroupDb(db);
+          logConfigChange(db, pc.dockId, senderId, senderName, changeDesc);
+          delete dmSession.pendingChange;
+          saveGroupDb(db);
+
+          // Notify group if slowmode was scheduled
+          if (pc.setting === "slowmodeSchedule" && pc.value.seconds > 0) {
+            try {
+              await aero.sendMessage(pc.dockId, `⏳ **[Slowmode Alert]:** Admin has enabled a scheduled slowmode of **${pc.value.seconds}s** for the next **${pc.value.durationMinutes} minutes**.`);
+            } catch (err) {
+              console.error(`[SlowmodeSchedule] Failed to notify dock ${pc.dockId}:`, err.message);
+            }
+          }
+
+          await aero.sendMessage(dockId, `✅ **Change Applied Successfully!**\n\n📢 *Change:* ${changeDesc} in group **${pc.dockName}**.`);
+          return;
+        } else if (cleanText === "/no" || cleanText === "no") {
+          delete dmSession.pendingChange;
+          saveGroupDb(db);
+          await aero.sendMessage(dockId, `❌ **Change Cancelled.** Koi setting update nahi ki gayi.`);
+          return;
+        } else {
+          await aero.sendMessage(dockId, `⚠️ **Awaiting Confirmation!** Please reply with **yes** (or **/yes**) to confirm the pending change, or **no** (or **/no**) to cancel it.`);
+          return;
+        }
+      }
+
       const trimmedText = text.trim();
       const lowerText = trimmedText.toLowerCase();
 
@@ -1903,7 +2026,7 @@ I will automatically log it as a task and keep you updated! 😊`;
         return;
       }
 
-      // Text-Only conversational Guide AI (stateless or single-turn helper)
+      // Text-Only conversational Guide AI (dynamic NLU assistant)
       if (text) {
         try {
           const { providers } = require("./providers");
@@ -1911,31 +2034,248 @@ I will automatically log it as a task and keep you updated! 😊`;
           let dockListText = "";
           adminDocks.forEach(d => {
             const gSettings = getGroupSettings(db, d.id);
-            dockListText += `- Name: "${d.name}", ID: "${d.id}", Greeting Status: ${gSettings.greetingEnabled !== false ? "ON" : "OFF"}, Custom Greeting: "${gSettings.greetingMessage || "none"}"\n`;
+            dockListText += `- Name: "${d.name}", ID: "${d.id}", Greeting Status: ${gSettings.greetingEnabled !== false ? "ON" : "OFF"}, Custom Greeting: "${gSettings.greetingMessage || "none"}", Language: "${gSettings.language || "hinglish"}", Max Warnings: ${gSettings.maxWarnings !== undefined ? gSettings.maxWarnings : 3}, Warning Action: "${gSettings.warningAction || "mute"}"\n`;
           });
 
-          const systemPrompt = `You are AeroGroupGuard Admin Assistant, a text-only AI designed to guide group admins in Direct Messages.
-You help admins manage their groups by explaining how to use the available DM commands.
+          // Step 1: Run NLU Parser to see if they are requesting a change or logs
+          const parserPrompt = `You are a group settings request parser. Your task is to analyze the user's natural language message and extract settings change requests or log requests.
 
-The user is an admin/owner of the following groups (docks):
+The user manages the following group chats (docks):
 ${dockListText}
 
-Available DM Commands:
-1. /docks - Lists all groups you manage, their IDs, and current greeting settings.
-2. /greeting <group_name_or_id> <on/off> - Turn the welcome greeting message ON or OFF for a group.
-3. /setgreeting <group_name_or_id> <message> - Set a custom greeting message. Placeholders: {username}, {name}, and {groupname}.
-4. /logs <group_name_or_id> - View the last 10 configuration changes.
-5. /broadcast <group_name_or_id_or_all> <message> - Send announcements (with attachments if present) to one or all groups you manage.
-6. /createcommand <group_name_or_id> <trigger_with_slash> <response> - Create custom command auto-replies.
-7. /deletecommand <group_name_or_id> <trigger_with_slash> - Delete custom commands.
-8. /slowmode_schedule <group_name_or_id> <seconds> <duration_minutes> - Schedule slowmode for a limited time.
+You must return a JSON object representing the action the user wants to perform.
+Valid actions are:
+1. "change_setting": when the user wants to enable/disable or modify any of these configurations:
+   - "greetingEnabled" (value: true or false)
+   - "greetingMessage" (value: string text)
+   - "aiModel" (value: string name of model, e.g. "groq", "cerebras")
+   - "aiSlowmodeSec" (value: number of seconds)
+   - "botDisabled" (value: true or false)
+   - "systemPromptExtension" (value: string description of AI personality/persona)
+   - "bannedWords_add" (value: string word to blacklist)
+   - "bannedWords_delete" (value: string word to remove from blacklist)
+   - "maxWarnings" (value: number of max warning counts)
+   - "warningAction" (value: "mute" or "kick" or "ban")
+   - "rules" (value: string rules text)
+   - "language" (value: "english" or "hindi" or "hinglish")
+   - "customCommand_add" (value: string response text, trigger: string trigger command e.g. "/insta")
+   - "customCommand_delete" (trigger: string trigger command e.g. "/insta")
+   - "slowmodeSchedule" (value: { seconds: number, durationMinutes: number })
+
+2. "view_logs": when the user wants to see the settings change history for a group.
+   - optionally, "userFilter" can be set if they mention a username to filter logs for (e.g. "yamdut").
+
+3. "guide": when they are asking a question about how commands work, how to manage groups, or general assistance, or if no settings change matches.
+
+JSON Output Format:
+{
+  "action": "change_setting" | "view_logs" | "guide",
+  "dockQuery": "name or ID of target group referenced by the user (or empty string)",
+  "setting": "setting_name" (only for change_setting),
+  "value": value (any type, only for change_setting),
+  "trigger": "trigger_command" (only for custom commands),
+  "userFilter": "username" (only for view_logs with username filter, otherwise null)
+}
+
+CRITICAL RULES:
+- If the user specifies a change, extract it accurately. E.g., "awara group me bot ko ek funny shayar bana de" -> action: "change_setting", dockQuery: "awara", setting: "systemPromptExtension", value: "funny shayar".
+- If the user asks for logs of a specific user in a group: E.g., "yamdut ne dead chat me kya changes kiye" -> action: "view_logs", dockQuery: "dead chat", userFilter: "yamdut".
+- Return ONLY the raw JSON object. Do not wrap in markdown code blocks, do not write explanations. Just return the JSON object.`;
+
+          const parseMessages = [
+            { role: "system", content: parserPrompt },
+            { role: "user", content: text }
+          ];
+
+          const parseCompletion = await providers.chatCompletion(parseMessages, {
+            model: "default",
+            temperature: 0.0
+          });
+
+          let rawContent = (parseCompletion.choices[0].message.content || "").trim();
+          if (rawContent.startsWith("```json")) {
+            rawContent = rawContent.substring(7);
+          }
+          if (rawContent.endsWith("```")) {
+            rawContent = rawContent.substring(0, rawContent.length - 3);
+          }
+          rawContent = rawContent.trim();
+
+          let parsed = { action: "guide" };
+          try {
+            parsed = JSON.parse(rawContent);
+          } catch (e) {
+            console.warn("[Admin DM Parser] Failed to parse JSON, falling back to guide.", rawContent);
+          }
+
+          if (parsed.action === "change_setting" && parsed.setting) {
+            const targetQuery = parsed.dockQuery || "";
+            const targetDock = adminDocks.find(d => 
+              d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+            );
+
+            if (!targetDock) {
+              await aero.sendMessage(dockId, `❓ **Aap kis group/dock me ye change karna chahte hain?**\n\nHumne aapka change detect kiya hai, lekin correct group nahi mila. Reply karein group ke name ke sath, jaise:\n` + adminDocks.map(d => `- **${d.name}**`).join("\n"));
+              return;
+            }
+
+            let displayText = "";
+            let previewText = "";
+            const val = parsed.value;
+
+            if (parsed.setting === "greetingEnabled") {
+              displayText = `Turn greeting messages ${val ? 'ON' : 'OFF'}`;
+              previewText = `Greeting status will be ${val ? 'Active' : 'Disabled'} for new members joining the group.`;
+            } else if (parsed.setting === "greetingMessage") {
+              displayText = `Set custom greeting message to: "${val}"`;
+              previewText = `A new user joining the group will see:\n"${String(val).replace(/{username}/gi, "@Rohan").replace(/{name}/gi, "Rohan").replace(/{groupname}/gi, targetDock.name)}"`;
+            } else if (parsed.setting === "aiModel") {
+              displayText = `Change AI Model to: ${val}`;
+              previewText = `Group mention responses will use the "${val}" provider.`;
+            } else if (parsed.setting === "aiSlowmodeSec") {
+              displayText = `Set AI Cooldown slowmode to ${val} seconds`;
+              previewText = `Users will have to wait ${val}s between asking consecutive AI questions.`;
+            } else if (parsed.setting === "botDisabled") {
+              displayText = `Turn Bot ${val ? 'OFF' : 'ON'} (botDisabled = ${val})`;
+              previewText = `The bot will be ${val ? 'Disabled' : 'Enabled'} in the group chat.`;
+            } else if (parsed.setting === "systemPromptExtension") {
+              displayText = `Set AI Persona prompt to: "${val}"`;
+              previewText = `The bot's group replies will be instructed with: "${val}"`;
+            } else if (parsed.setting === "bannedWords_add") {
+              displayText = `Add "${val}" to banned words list`;
+              previewText = `If any member sends a message containing "${val}", the bot will delete/warn them.`;
+            } else if (parsed.setting === "bannedWords_delete") {
+              displayText = `Remove "${val}" from banned words list`;
+              previewText = `Messages containing "${val}" will no longer trigger warnings.`;
+            } else if (parsed.setting === "maxWarnings") {
+              displayText = `Set maximum warnings to ${val}`;
+              previewText = `Users will receive up to ${val} warnings before the penalty action is executed.`;
+            } else if (parsed.setting === "warningAction") {
+              displayText = `Set warning limit penalty action to: ${val}`;
+              previewText = `When a user exceeds the warning threshold, they will be: ${String(val).toUpperCase()}.`;
+            } else if (parsed.setting === "rules") {
+              displayText = `Update group rules`;
+              previewText = `New rules returned by /rules:\n"${val}"`;
+            } else if (parsed.setting === "language") {
+              displayText = `Change group language to ${val}`;
+              previewText = `Default warnings and default welcome responses will be sent in ${String(val).toUpperCase()}.`;
+            } else if (parsed.setting === "customCommand_add") {
+              displayText = `Register custom command ${parsed.trigger} -> "${val}"`;
+              previewText = `When anyone types "${parsed.trigger}" in chat, the bot will auto-reply:\n"${val}"`;
+            } else if (parsed.setting === "customCommand_delete") {
+              displayText = `Delete custom command ${parsed.trigger}`;
+              previewText = `The trigger "${parsed.trigger}" will no longer auto-respond.`;
+            } else if (parsed.setting === "slowmodeSchedule") {
+              const secs = val?.seconds || 0;
+              const mins = val?.durationMinutes || 0;
+              displayText = `Enable scheduled slowmode of ${secs}s for ${mins} minutes`;
+              previewText = `Chat slowmode of ${secs}s will be active until scheduled timer expires.`;
+            } else {
+              displayText = `Change setting "${parsed.setting}" to: ${JSON.stringify(val)}`;
+              previewText = `Apply setting update to group config.`;
+            }
+
+            if (!db.dmSession) db.dmSession = {};
+            db.dmSession[senderId] = {
+              pendingChange: {
+                dockId: targetDock.id,
+                dockName: targetDock.name,
+                setting: parsed.setting,
+                value: val,
+                trigger: parsed.trigger,
+                displayText,
+                previewText
+              }
+            };
+            saveGroupDb(db);
+
+            const confirmMsg = `✍️ **Confirm Settings Update**
+
+Aapne group **${targetDock.name}** me ye change karne ko bola hai:
+👉 **Change:** ${displayText}
+
+📝 **Example / Preview:**
+${previewText}
+
+---
+⚠️ Kya aap is change ko apply karna chahte hain? 
+Reply karein **yes** (ya **/yes**) confirm karne ke liye, ya **no** (ya **/no**) cancel karne ke liye.`;
+            await aero.sendMessage(dockId, confirmMsg);
+            return;
+          } 
+          
+          if (parsed.action === "view_logs") {
+            const targetQuery = parsed.dockQuery || "";
+            const targetDock = adminDocks.find(d => 
+              d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+            );
+
+            if (!targetDock) {
+              await aero.sendMessage(dockId, `❓ **Aap kis group/dock ke logs dekhna chahte hain?**\n\nReply karein group name ke sath, jaise:\n` + adminDocks.map(d => `- **${d.name}**`).join("\n"));
+              return;
+            }
+
+            const gSettings = getGroupSettings(db, targetDock.id);
+            const logList = gSettings.configLogs || [];
+            if (logList.length === 0) {
+              await aero.sendMessage(dockId, `📋 No settings change logs found for **${targetDock.name}**.`);
+              return;
+            }
+
+            let filteredLogs = logList;
+            let header = "";
+            let limit = 10;
+
+            if (parsed.userFilter) {
+              const filterLower = parsed.userFilter.toLowerCase();
+              filteredLogs = logList.filter(l => 
+                l.user.toLowerCase().includes(filterLower) || 
+                l.userId.toLowerCase() === filterLower
+              );
+              limit = 5;
+              header = `📋 **Latest 5 Configuration Logs by "${parsed.userFilter}" in ${targetDock.name}:**\n\n`;
+            } else {
+              header = `📋 **Recent 10 Configuration Logs for ${targetDock.name}:**\n\n`;
+            }
+
+            if (filteredLogs.length === 0) {
+              await aero.sendMessage(dockId, `📋 Group **${targetDock.name}** me user "${parsed.userFilter}" ka koi settings change log nahi mila.`);
+              return;
+            }
+
+            let logMsg = header;
+            const displayLogs = filteredLogs.slice(0, limit);
+            displayLogs.forEach((l, idx) => {
+              const timeStr = new Date(l.timestamp).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+              logMsg += `${idx + 1}. [${timeStr}] **${l.user}**: ${l.change}\n`;
+            });
+            await aero.sendMessage(dockId, logMsg);
+            return;
+          }
+
+          // Fall through to guide AI for conversational requests
+          const systemPrompt = `You are AeroGroupGuard Admin Assistant, a text-only AI designed to guide group admins in Direct Messages.
+You help admins manage their groups by explaining how to change settings and check logs.
+You can parse natural language settings updates (like "set slowmode in awara to 15s" or "set group persona to a funny joker") and confirm them dynamically.
+
+The user manages the following group chats:
+${dockListText}
+
+Available configurations they can request:
+1. Turn welcome greetings ON/OFF.
+2. Update custom greeting message text.
+3. Configure the group's AI Persona (custom system prompt extension).
+4. Manage banned words list (add/remove blacklisted words).
+5. Configure warning limits (max warnings) and threshold actions (mute, kick, ban).
+6. Update group rules text and primary language (english, hindi, hinglish).
+7. Manage custom command triggers (e.g. /rules, /insta).
+8. Enable slowmode or scheduled slowmode.
+9. View activity/config change logs (optionally filtered by a specific username).
 
 Your instructions:
 - Respond in Hinglish.
 - Be helpful, concise, and friendly.
-- If the user wants to make a change, identify the matching group from their list.
-- Do NOT execute commands. Instead, tell the user the exact command they should type (e.g. \`/setgreeting awara Welcome to {name}!\`) to make that change.
-- Keep the conversation strictly focused on assisting them with these commands.`;
+- Keep the conversation strictly focused on guiding them. Tell them they can simply state what they want to change in their groups (e.g. "awara me rules badal do" or "dead chat ke yamdut ke logs dikha").`;
 
           const messages = [
             { role: "system", content: systemPrompt },
@@ -2094,6 +2434,21 @@ Your instructions:
         } catch (e) {
           console.error("[Abusive Filter AI Error]:", e.message);
         }
+      }
+    }
+
+    // Custom Banned Words blacklist check (independent of abusiveFilter status)
+    if (!isAbusiveViolation && Array.isArray(groupSettings.bannedWords) && groupSettings.bannedWords.length > 0) {
+      const lowerText = text.toLowerCase();
+      const hasBannedWord = groupSettings.bannedWords.some(word => {
+        const cleanWord = word.trim().toLowerCase();
+        if (!cleanWord) return false;
+        const escapedWord = cleanWord.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const pattern = new RegExp(`\\b${escapedWord}\\b|${escapedWord}`, "i");
+        return pattern.test(lowerText);
+      });
+      if (hasBannedWord) {
+        isAbusiveViolation = true;
       }
     }
 
@@ -2345,19 +2700,37 @@ Your instructions:
     const currentWarns = groupSettings.warnings[senderId];
     saveGroupDb(db);
 
-    if (currentWarns > 2) {
+    const maxWarns = groupSettings.maxWarnings !== undefined ? groupSettings.maxWarnings : 3;
+    const action = groupSettings.warningAction || "mute";
+
+    if (currentWarns >= maxWarns) {
       try {
-        await aero.banMember(dockId, senderId);
-        await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Exceeded 2 warnings (Abusive language).`);
-      } catch (banErr) {
-        console.error("[Auto-Ban Error]:", banErr.message);
+        if (action === "ban") {
+          await aero.banMember(dockId, senderId);
+          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Exceeded ${maxWarns} warnings (Abusive language).`);
+        } else if (action === "kick") {
+          await aero.kickMember(dockId, senderId);
+          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically kicked. Reason: Exceeded ${maxWarns} warnings (Abusive language).`);
+        } else {
+          // mute
+          try {
+            await aero.muteMember(dockId, senderId);
+            await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically muted. Reason: Exceeded ${maxWarns} warnings (Abusive language).`);
+          } catch (muteErr) {
+            console.warn("[Auto-Mute Error] Falling back to kick:", muteErr.message);
+            await aero.kickMember(dockId, senderId);
+            await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically kicked. Reason: Exceeded ${maxWarns} warnings (Abusive language, mute action failed/not supported).`);
+          }
+        }
+      } catch (err) {
+        console.error(`[Auto-Moderation Action Error] Action ${action} failed:`, err.message);
         if (shouldSendWarning(dockId, "abusive")) {
-          await aero.sendMessage(dockId, `🚨 @${senderName} exceeded 2 warnings, but automatic ban failed: ${banErr.message}`);
+          await aero.sendMessage(dockId, `🚨 @${senderName} exceeded ${maxWarns} warnings, but automatic ${action} failed: ${err.message}`);
         }
       }
     } else {
       if (shouldSendWarning(dockId, "abusive")) {
-        await aero.sendMessage(dockId, `⚠️ Warning: Abusive words are not allowed in this group. @${senderName}, this is warning ${currentWarns}/3.`);
+        await aero.sendMessage(dockId, `⚠️ Warning: Abusive words are not allowed in this group. @${senderName}, this is warning ${currentWarns}/${maxWarns}.`);
       }
     }
     return;
@@ -2372,19 +2745,37 @@ Your instructions:
     const currentWarns = groupSettings.warnings[senderId];
     saveGroupDb(db);
 
-    if (currentWarns > 2) {
+    const maxWarns = groupSettings.maxWarnings !== undefined ? groupSettings.maxWarnings : 3;
+    const action = groupSettings.warningAction || "mute";
+
+    if (currentWarns >= maxWarns) {
       try {
-        await aero.banMember(dockId, senderId);
-        await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Exceeded 2 warnings (Jailbreak/hacking/exploit attempt).`);
-      } catch (banErr) {
-        console.error("[Auto-Ban Error - Jailbreak]:", banErr.message);
+        if (action === "ban") {
+          await aero.banMember(dockId, senderId);
+          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Exceeded ${maxWarns} warnings (Jailbreak/hacking/exploit attempt).`);
+        } else if (action === "kick") {
+          await aero.kickMember(dockId, senderId);
+          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically kicked. Reason: Exceeded ${maxWarns} warnings (Jailbreak/hacking/exploit attempt).`);
+        } else {
+          // mute
+          try {
+            await aero.muteMember(dockId, senderId);
+            await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically muted. Reason: Exceeded ${maxWarns} warnings (Jailbreak/hacking/exploit attempt).`);
+          } catch (muteErr) {
+            console.warn("[Auto-Mute Error] Falling back to kick:", muteErr.message);
+            await aero.kickMember(dockId, senderId);
+            await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically kicked. Reason: Exceeded ${maxWarns} warnings (Jailbreak/hacking/exploit attempt, mute action failed/not supported).`);
+          }
+        }
+      } catch (err) {
+        console.error(`[Auto-Moderation Action Error - Jailbreak] Action ${action} failed:`, err.message);
         if (shouldSendWarning(dockId, "jailbreak")) {
-          await aero.sendMessage(dockId, `🚨 @${senderName} exceeded 2 warnings, but automatic ban failed: ${banErr.message}`);
+          await aero.sendMessage(dockId, `🚨 @${senderName} exceeded ${maxWarns} warnings, but automatic ${action} failed: ${err.message}`);
         }
       }
     } else {
       if (shouldSendWarning(dockId, "jailbreak")) {
-        await aero.sendMessage(dockId, `⚠️ Warning: Hack/Jailbreak/Exploit attempts are strictly forbidden! @${senderName}, this is warning ${currentWarns}/3.`);
+        await aero.sendMessage(dockId, `⚠️ Warning: Hack/Jailbreak/Exploit attempts are strictly forbidden! @${senderName}, this is warning ${currentWarns}/${maxWarns}.`);
       }
     }
     return;

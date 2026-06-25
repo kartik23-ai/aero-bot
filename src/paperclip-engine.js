@@ -224,6 +224,24 @@ class PaperclipEngine {
     const dockId = msg.dockId || "default-dock";
     const imageBuffer = msg.imageBuffer || null;
 
+    // Load custom persona dynamically from DB
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const dbPath = path.join(__dirname, "..", "db", "group_database.json");
+    let systemPromptExtension = "";
+    if (fs.existsSync(dbPath)) {
+      try {
+        const db = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
+        const g = db.groups?.[dockId];
+        if (g) {
+          systemPromptExtension = g.systemPromptExtension || "";
+        }
+      } catch (err) {
+        console.error("[PaperclipEngine] Failed to load DB for systemPromptExtension:", err.message);
+      }
+    }
+    msg.systemPromptExtension = systemPromptExtension;
+
     const agentType = this.routeMessage(text);
     console.log(`[PaperclipEngine] ${senderName} → ${agentType} (Model: ${dockModel || "default"})`);
 
@@ -232,7 +250,7 @@ class PaperclipEngine {
 
     let result;
     switch (agentType) {
-      case "HUMAN_AGENT":      result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer); break;
+      case "HUMAN_AGENT":      result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, msg.systemPromptExtension); break;
       case "CODE_AGENT":       result = await this._runCodeAgent(text, senderName, dockModel); break;
       case "CREATIVE_AGENT":   result = await this._runCreativeAgent(text, senderName, dockModel); break;
       case "SEARCH_AGENT":     result = await this._runSearchAgent(text, senderName, dockModel); break;
@@ -250,7 +268,7 @@ class PaperclipEngine {
       case "JOKE_API_AGENT":   result = await this._runJokeApiAgent(text); break;
       case "NEWS_AGENT":       result = await this._runNewsAgent(text); break;
       case "SPORTS_AGENT":     result = await this._runSportsAgent(text); break;
-      default:                 result = await this._runHumanAgent(text, memoryKey, senderName, dockModel); break;
+      default:                 result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, null, msg.systemPromptExtension); break;
     }
 
     // Safety and formatting output checks
@@ -280,7 +298,7 @@ class PaperclipEngine {
 
   // AGENT: Human Chat — Groq / Cerebras (fastest)
   // =============================================
-  async _runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer) {
+  async _runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, systemPromptExtension) {
     const facts = HermesMemory.compileFactsString(memoryKey);
     const count = HermesMemory.getInteractionCount(memoryKey);
     const familiarity = count > 10 ? "close friend" : count > 3 ? "known" : "new";
@@ -321,8 +339,13 @@ class PaperclipEngine {
 ${uniqueMemories.map(m => `  * ${m}`).join("\n")}`;
     }
 
+    let extensionPrompt = "";
+    if (systemPromptExtension) {
+      extensionPrompt = `\n- **SPECIAL USER PERSONA INSTRUCTION**: You must follow this persona instruction for your replies: "${systemPromptExtension}". Modify your tone/persona accordingly, but keep the Hinglish rules.`;
+    }
+
     // Friendly buddy prompt - chatting like a very close friend (bestie / desi dost) in Hinglish
-    const systemPrompt = `You are a very close, casual, and chilled-out human friend (bestie / desi dost). You are chatting directly with your friend ${senderName}.
+    const systemPrompt = `You are a very close, casual, and chilled-out human friend (bestie / desi dost). You are chatting directly with your friend ${senderName}.${extensionPrompt}
 
 - Chat tone should be warm, natural, and friendly. Speak like a real buddy on Aero Messenger.
 - Use casual Hinglish (mix of Hindi + English using English/Latin alphabets only).

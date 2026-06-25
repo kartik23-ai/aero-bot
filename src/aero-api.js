@@ -290,6 +290,18 @@ class AeroAPI {
   }
 
   /**
+   * Mute a member in a dock
+   */
+  async muteMember(dockId, userId) {
+    const res = await axios.post(
+      `${API_BASE}/docks/${dockId}/members/${userId}/mute`,
+      {},
+      { headers: this._authHeaders() }
+    );
+    return res.data;
+  }
+
+  /**
    * Update dock settings on the Aero Messenger server
    */
   async updateDockSettings(dockId, settings) {
