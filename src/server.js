@@ -65,8 +65,8 @@ let lastDocksFetchTime = 0;
 let inFlightDocksFetch = null;
 
 // Global regex patterns for abusive language and profanity detection
-const globalAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bhenchodd|bkl|bhosdike|bhosda|bhosadi|bhosdika|randi|bhadva|raand|lawda|lauda|motherfucker|cunt|cocksucker|sisterfucker|mc\s+bc|bc\s+mc)\b/i;
-const globalSuspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bhenchodd|bkl|bhosdike|bhosda|bhosadi|bhosdika|randi|bhadva|raand|lawda|lauda|motherfucker|cunt|cocksucker|sisterfucker|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
+const globalAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bhenchodd|bkl|bhosdike|bhosda|bhosadi|bhosdika|randi|bhadva|raand|lawda|lauda|motherfucker|cunt|cocksucker|sisterfucker|fuck|bitch|asshole|gandu|lund|bakchod|mc\s+bc|bc\s+mc)\b/i;
+const globalSuspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bhenchodd|bkl|bhosdike|bhosda|bhosadi|bhosdika|randi|bhadva|raand|lawda|lauda|motherfucker|cunt|cocksucker|sisterfucker|fuck|bitch|asshole|gandu|lund|bakchod|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
 
 // Rate limit warning messages to avoid spamming the Aero server (5 seconds cooldown per group per violation type)
 const lastWarningTime = new Map();
@@ -2766,7 +2766,7 @@ IMPORTANT:
             messages: [
               {
                 role: "system",
-                content: "You are a content moderation assistant. Analyze the user message and identify if it contains extreme, highly offensive abusive language, severe profanity, or major insults in Hindi, Hinglish, or English (such as mc, bc, madarchod, behnchod, bhosdike, bhosdika, randi, bhadva, raand, lawda, lauda, motherfucker, cunt, cocksucker, etc.). If the message only contains mild slang, casual cuss words, or minor expressions (like fuck, bitch, asshole, bastard, saala, kutta, kamine, chutiya, gandu, lund, gaand, bakchod, etc.), you MUST classify it as SAFE. Reply with EXACTLY 'ABUSIVE' (only for extreme/severe abuse) or 'SAFE' (for mild/casual words or normal text). Do not reply with anything else."
+                content: "You are a content moderation assistant. Analyze the user message and identify if it contains extreme, highly offensive abusive language, severe profanity, or major insults in Hindi, Hinglish, or English (such as mc, bc, madarchod, behnchod, bhosdike, bhosdika, randi, bhadva, raand, lawda, lauda, motherfucker, cunt, cocksucker, fuck, bitch, asshole, gandu, lund, bakchod, etc.). If the message only contains mild slang, casual cuss words, or minor expressions (like saala, kutta, kamine, chutiya, gaand, bastard, shit, damn, etc.), you MUST classify it as SAFE. Reply with EXACTLY 'ABUSIVE' (only for extreme/severe abuse) or 'SAFE' (for mild/casual words or normal text). Do not reply with anything else."
               },
               {
                 role: "user",
