@@ -65,8 +65,8 @@ let lastDocksFetchTime = 0;
 let inFlightDocksFetch = null;
 
 // Global regex patterns for abusive language and profanity detection
-const globalAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|mc\s+bc|bc\s+mc|bakchod|bakchodi|chutiya|gandu|lund|gaand|fuck|bitch|asshole|bastard|randi|bhadva)\b/i;
-const globalSuspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bkl|bhenchodd|bhosdike|bhosda|bhosadi|bhosdika|bakchod|bakchodi|chut|gand|lund|gaand|saal|kutt|kamin|haram|raand|randi|saala|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd|chutiya|gandu|fuck|bitch|asshole|bastard|bhadva|kamine|kutta)/i;
+const globalAbusiveRegex = /\b(mc|bc|madrchod|madarchod|behnchod|behenchod|bhenchodd|bkl|bhosdike|bhosda|bhosadi|bhosdika|randi|bhadva|raand|lawda|lauda|motherfucker|cunt|cocksucker|sisterfucker|mc\s+bc|bc\s+mc)\b/i;
+const globalSuspiciousRegex = /(mc|bc|madrchod|madarchod|behnchod|behenchod|bhenchodd|bkl|bhosdike|bhosda|bhosadi|bhosdika|randi|bhadva|raand|lawda|lauda|motherfucker|cunt|cocksucker|sisterfucker|l@nd|g@nd|c[h]*ut|m[a]*d[a]*rc[h]|b[e]*[h]*n[c]*h|b[h]*osd)/i;
 
 // Rate limit warning messages to avoid spamming the Aero server (5 seconds cooldown per group per violation type)
 const lastWarningTime = new Map();
@@ -2766,7 +2766,7 @@ IMPORTANT:
             messages: [
               {
                 role: "system",
-                content: "You are a content moderation assistant. Check if the user message contains any abusive language, gaalis, profanity, vulgarity, or insults in Hindi, Hinglish, or English (including words like mc, bc, madarchod, behnchod, bkl, bhosdike, chutiya, gandu, lund, gaand, harami, raand, bhadva, fuck, bitch, asshole, bastard, etc.). Reply with EXACTLY 'ABUSIVE' or 'SAFE'. Do not reply with anything else."
+                content: "You are a content moderation assistant. Analyze the user message and identify if it contains extreme, highly offensive abusive language, severe profanity, or major insults in Hindi, Hinglish, or English (such as mc, bc, madarchod, behnchod, bhosdike, bhosdika, randi, bhadva, raand, lawda, lauda, motherfucker, cunt, cocksucker, etc.). If the message only contains mild slang, casual cuss words, or minor expressions (like fuck, bitch, asshole, bastard, saala, kutta, kamine, chutiya, gandu, lund, gaand, bakchod, etc.), you MUST classify it as SAFE. Reply with EXACTLY 'ABUSIVE' (only for extreme/severe abuse) or 'SAFE' (for mild/casual words or normal text). Do not reply with anything else."
               },
               {
                 role: "user",
@@ -2788,6 +2788,7 @@ IMPORTANT:
     }
 
     // Custom Banned Words blacklist check (independent of abusiveFilter status)
+    let isCustomBannedViolation = false;
     if (!isAbusiveViolation && Array.isArray(groupSettings.bannedWords) && groupSettings.bannedWords.length > 0) {
       const lowerText = text.toLowerCase();
       const hasBannedWord = groupSettings.bannedWords.some(word => {
@@ -2798,6 +2799,7 @@ IMPORTANT:
         return pattern.test(lowerText);
       });
       if (hasBannedWord) {
+        isCustomBannedViolation = true;
         isAbusiveViolation = true;
       }
     }
@@ -3043,6 +3045,29 @@ IMPORTANT:
 
   // 3. Abusive Word Filter
   if (isAbusiveViolation && !isSenderAdmin) {
+    if (groupSettings.abusiveFilter && !isCustomBannedViolation) {
+      // Direct kick or ban for extreme abusive language (main filter)
+      const action = groupSettings.warningAction || "mute";
+      const directAction = action === "ban" ? "ban" : "kick";
+      
+      try {
+        if (directAction === "ban") {
+          await aero.banMember(dockId, senderId);
+          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically banned. Reason: Extreme abusive language.`);
+        } else {
+          await aero.kickMember(dockId, senderId);
+          await aero.sendMessage(dockId, `🚨 @${senderName} has been automatically kicked. Reason: Extreme abusive language.`);
+        }
+      } catch (err) {
+        console.error(`[Auto-Moderation Action Error] Direct ${directAction} failed:`, err.message);
+        if (shouldSendWarning(dockId, "abusive")) {
+          await aero.sendMessage(dockId, `🚨 @${senderName} used extreme abusive language, but automatic ${directAction} failed: ${err.message}`);
+        }
+      }
+      return;
+    }
+
+    // Warnings flow for Custom Banned Words
     if (!groupSettings.warnings[senderId]) {
       groupSettings.warnings[senderId] = 0;
     }
