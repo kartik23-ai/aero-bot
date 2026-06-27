@@ -86,7 +86,7 @@ function shouldSendWarning(dockId, type) {
 // Helper to refresh docks list lazily with coalescing
 async function refreshDocksIfNeeded(force = false, dockId = null) {
   const db = loadGroupDb();
-  if (dockId) {
+  if (dockId && !force) {
     const targetDock = (aero.docks || []).find(d => d.id === dockId);
     if (targetDock && (targetDock.role === "admin" || targetDock.role === "owner") && targetDock.admins && targetDock.admins.length > 0) {
       console.log(`[DocksCache] Bot is already admin in dock ${dockId} and cache has admins list. Skipping Aero server metadata refresh.`);
@@ -492,20 +492,137 @@ function logConfigChange(db, dockId, userId, userName, changeDescription) {
   }
 }
 
+async function handleFinalizeAction(dockId, senderId, senderName, db, dmSession, adminDocks) {
+  const queue = dmSession.queue || [];
+  if (queue.length === 0) {
+    await aero.sendMessage(dockId, "📋 **Queue is currently empty.** Pehle settings change stage karein!");
+    return;
+  }
+  
+  let appliedList = "";
+  let notifyTasks = [];
+  
+  for (const item of queue) {
+    const matchesAdmin = adminDocks.some(d => d.id === item.dockId);
+    if (!matchesAdmin) continue;
+    
+    const gSettings = getGroupSettings(db, item.dockId);
+    
+    if (item.setting === "greetingEnabled") {
+      gSettings.greetingEnabled = item.value;
+    } else if (item.setting === "greetingMessage") {
+      gSettings.greetingMessage = item.value;
+    } else if (item.setting === "aiModel") {
+      gSettings.aiModel = item.value;
+    } else if (item.setting === "botDisabled") {
+      gSettings.botDisabled = item.value;
+    } else if (item.setting === "aiRepliesDisabled") {
+      gSettings.aiRepliesDisabled = item.value;
+    } else if (item.setting === "memesDisabled") {
+      gSettings.memesDisabled = item.value;
+    } else if (item.setting === "systemPromptExtension") {
+      gSettings.systemPromptExtension = item.value;
+    } else if (item.setting === "rules") {
+      gSettings.rules = item.value;
+    } else if (item.setting === "language") {
+      gSettings.language = item.value;
+    } else if (item.setting === "maxWarnings") {
+      gSettings.maxWarnings = item.value;
+    } else if (item.setting === "warningAction") {
+      gSettings.warningAction = item.value;
+    } else if (item.setting === "customCommand_add") {
+      if (!gSettings.customCommands) gSettings.customCommands = {};
+      gSettings.customCommands[item.trigger.toLowerCase()] = item.value;
+    } else if (item.setting === "customCommand_delete") {
+      if (gSettings.customCommands) {
+        delete gSettings.customCommands[item.trigger.toLowerCase()];
+      }
+    } else if (item.setting === "slowmodeSchedule") {
+      gSettings.slowmodeSeconds = item.value.seconds;
+      if (item.value.seconds === 0) {
+        gSettings.slowmodeSchedule = null;
+      } else {
+        const endTime = Date.now() + item.value.durationMinutes * 60 * 1000;
+        gSettings.slowmodeSchedule = { seconds: item.value.seconds, endTime };
+        notifyTasks.push({
+          dockId: item.dockId,
+          msg: `⏳ **[Slowmode Alert]:** Admin has enabled a scheduled slowmode of **${item.value.seconds}s** for the next **${item.value.durationMinutes} minutes**.`
+        });
+      }
+    } else if (item.setting === "automation_add") {
+      if (!gSettings.automations) gSettings.automations = [];
+      gSettings.automations = gSettings.automations.filter(a => a.type !== item.value.type);
+      const autoId = "auto-" + Math.random().toString(36).substring(2, 10);
+      gSettings.automations.push({
+        id: autoId,
+        dockId: item.dockId,
+        dockName: item.dockName,
+        creatorId: senderId,
+        creatorName: senderName,
+        type: item.value.type,
+        time: item.value.time,
+        task: item.value.task || "",
+        mentions: item.value.mentions || [],
+        lastExecutedDate: ""
+      });
+      notifyTasks.push({
+        dockId: item.dockId,
+        msg: `🤖 **[Automation Configured]:** Daily automation task configured for **${item.value.type}** at **${item.value.time}**.`
+      });
+    } else if (item.setting === "automation_delete") {
+      if (gSettings.automations) {
+        if (item.value === "all") {
+          gSettings.automations = [];
+        } else {
+          gSettings.automations = gSettings.automations.filter(a => a.type !== item.value);
+        }
+      }
+    } else if (item.setting === "sleepMode") {
+      gSettings.sleepModeEnabled = item.value.enabled;
+      gSettings.sleepTimeoutHours = item.value.timeoutHours || 10;
+      if (!gSettings.sleepModeEnabled) {
+        gSettings.sleeping = false;
+      }
+      notifyTasks.push({
+        dockId: item.dockId,
+        msg: `💤 **[Sleep Mode Configured]:** Sleep mode set to **${item.value.enabled ? "ENABLED" : "DISABLED"}** with a timeout of **${item.value.timeoutHours || 10} hours**.`
+      });
+    }
+    
+    logConfigChange(db, item.dockId, senderId, senderName, item.displayText);
+    appliedList += `- **${item.dockName}**: ${item.displayText}\n`;
+  }
+  
+  saveGroupDb(db);
+  dmSession.queue = [];
+  saveGroupDb(db);
+  
+  for (const t of notifyTasks) {
+    try {
+      await aero.sendMessage(t.dockId, t.msg);
+    } catch (err) {
+      console.error(`[Finalize Notification] Failed to notify dock ${t.dockId}:`, err.message);
+    }
+  }
+  
+  await aero.sendMessage(dockId, `✅ **Implementation Finalized!** All queued changes applied successfully:\n\n${appliedList}`);
+}
+
 async function checkIsAdmin(dockId, userId, forceRefresh = false) {
   if (!userId || !dockId) return false;
   if (userId === "owner-1") return true;
 
   try {
-    if (forceRefresh) {
-      await refreshDocksIfNeeded(true);
-    } else {
-      await refreshDocksIfNeeded(false, dockId);
-    }
-    const dock = aero.docks.find(d => d.id === dockId);
-    if (!dock) return false;
+    let dock = aero.docks.find(d => d.id === dockId);
+    let isAdmin = dock && (dock.creatorId === userId || (dock.admins && dock.admins.includes(userId)));
     
-    return dock.creatorId === userId || (dock.admins && dock.admins.includes(userId));
+    if (!isAdmin || forceRefresh) {
+      console.log(`[AdminCheck] User ${userId} not marked admin in cache for ${dockId}. Refreshing docks live...`);
+      await refreshDocksIfNeeded(true);
+      dock = aero.docks.find(d => d.id === dockId);
+      isAdmin = dock && (dock.creatorId === userId || (dock.admins && dock.admins.includes(userId)));
+    }
+    return isAdmin;
   } catch (err) {
     console.error(`[AdminCheck] Failed to check admin status for ${userId} in ${dockId}:`, err.message);
     const dock = aero.docks.find(d => d.id === dockId);
@@ -1894,132 +2011,58 @@ I will automatically log it as a task and keep you updated! 😊`;
       return;
     }
   }
-    // Admin DM control and conversational guide AI
-    const isDev = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
-    await refreshDocksIfNeeded(true);
-    
-    const adminDocks = (aero.docks || []).filter(d => 
-      d.creatorId === senderId || (d.admins && d.admins.includes(senderId))
-    );
 
-    if (adminDocks.length > 0) {
-      if (!db.dmSession) db.dmSession = {};
-      let dmSession = db.dmSession[senderId];
-      if (!dmSession) {
-        db.dmSession[senderId] = {};
-        dmSession = db.dmSession[senderId];
-      }
+  // Admin DM control and conversational guide AI
+  const isDev = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
+  await refreshDocksIfNeeded(true);
+  
+  const adminDocks = (aero.docks || []).filter(d => 
+    d.creatorId === senderId || (d.admins && d.admins.includes(senderId))
+  );
 
-      if (dmSession && dmSession.pendingChange) {
-        const cleanText = text.trim().toLowerCase();
-        if (cleanText === "/yes" || cleanText === "yes") {
-          const pc = dmSession.pendingChange;
-          
-          // Verify user still manages this dock for security
-          const matchesAdmin = adminDocks.some(d => d.id === pc.dockId);
-          if (!matchesAdmin) {
-            delete dmSession.pendingChange;
-            saveGroupDb(db);
-            await aero.sendMessage(dockId, "❌ Security alert: You no longer manage this group. Change cancelled.");
-            return;
-          }
+  if (adminDocks.length > 0) {
+    if (!db.dmSession) db.dmSession = {};
+    let dmSession = db.dmSession[senderId];
+    if (!dmSession) {
+      db.dmSession[senderId] = {};
+      dmSession = db.dmSession[senderId];
+    }
 
-          const gSettings = getGroupSettings(db, pc.dockId);
-          let changeDesc = "";
+    if (!dmSession.queue) {
+      dmSession.queue = [];
+    }
 
-          if (pc.setting === "greetingEnabled") {
-            gSettings.greetingEnabled = pc.value;
-            changeDesc = `Greeting message turned ${pc.value ? 'ON' : 'OFF'}`;
-          } else if (pc.setting === "greetingMessage") {
-            gSettings.greetingMessage = pc.value;
-            changeDesc = `Greeting message updated to: "${pc.value}"`;
-          } else if (pc.setting === "aiModel") {
-            gSettings.aiModel = pc.value;
-            changeDesc = `AI Model routing updated to: ${pc.value}`;
-          } else if (pc.setting === "aiSlowmodeSec") {
-            gSettings.aiSlowmodeSec = pc.value;
-            changeDesc = `AI Slowmode seconds set to ${pc.value}s`;
-          } else if (pc.setting === "botDisabled") {
-            gSettings.botDisabled = pc.value;
-            changeDesc = `Bot turned ${pc.value ? 'OFF' : 'ON'} for this group`;
-          } else if (pc.setting === "systemPromptExtension") {
-            gSettings.systemPromptExtension = pc.value;
-            changeDesc = `AI Persona prompt extension updated to: "${pc.value}"`;
-          } else if (pc.setting === "rules") {
-            gSettings.rules = pc.value;
-            changeDesc = `Group rules updated to: "${pc.value}"`;
-          } else if (pc.setting === "language") {
-            gSettings.language = pc.value;
-            changeDesc = `Group language set to ${pc.value}`;
-          } else if (pc.setting === "maxWarnings") {
-            gSettings.maxWarnings = pc.value;
-            changeDesc = `Max warnings limit set to ${pc.value}`;
-          } else if (pc.setting === "warningAction") {
-            gSettings.warningAction = pc.value;
-            changeDesc = `Warning limit action updated to ${pc.value}`;
-          } else if (pc.setting === "customCommand_add") {
-            if (!gSettings.customCommands) gSettings.customCommands = {};
-            gSettings.customCommands[pc.trigger.toLowerCase()] = pc.value;
-            changeDesc = `Custom command ${pc.trigger} registered: "${pc.value}"`;
-          } else if (pc.setting === "customCommand_delete") {
-            if (gSettings.customCommands) {
-              delete gSettings.customCommands[pc.trigger.toLowerCase()];
-            }
-            changeDesc = `Custom command ${pc.trigger} deleted`;
-          } else if (pc.setting === "bannedWords_add") {
-            if (!gSettings.bannedWords) gSettings.bannedWords = [];
-            if (!gSettings.bannedWords.includes(pc.value.toLowerCase())) {
-              gSettings.bannedWords.push(pc.value.toLowerCase());
-            }
-            changeDesc = `Added "${pc.value}" to banned words list`;
-          } else if (pc.setting === "bannedWords_delete") {
-            if (gSettings.bannedWords) {
-              gSettings.bannedWords = gSettings.bannedWords.filter(w => w !== pc.value.toLowerCase());
-            }
-            changeDesc = `Removed "${pc.value}" from banned words list`;
-          } else if (pc.setting === "slowmodeSchedule") {
-            gSettings.slowmodeSeconds = pc.value.seconds;
-            if (pc.value.seconds === 0) {
-              gSettings.slowmodeSchedule = null;
-              changeDesc = `Slowmode disabled`;
-            } else {
-              const endTime = Date.now() + pc.value.durationMinutes * 60 * 1000;
-              gSettings.slowmodeSchedule = { seconds: pc.value.seconds, endTime };
-              changeDesc = `Slowmode scheduled to ${pc.value.seconds}s for ${pc.value.durationMinutes} minutes`;
-            }
-          }
+    const trimmedText = text.trim();
+    const lowerText = trimmedText.toLowerCase();
 
+    // Invite Code Resolver Check
+    let potentialInviteCode = trimmedText;
+    if (potentialInviteCode.startsWith("/join ")) potentialInviteCode = potentialInviteCode.substring(6).trim();
+    else if (potentialInviteCode.startsWith("join ")) potentialInviteCode = potentialInviteCode.substring(5).trim();
+
+    const isAlphanumericCode = /^[a-zA-Z0-9_-]{4,15}$/.test(potentialInviteCode);
+    const isCommand = ["docks", "/docks", "active", "/active", "pending", "/pending", "finalize", "/finalize", "yes", "no", "clear", "cancel"].includes(lowerText);
+
+    if (isAlphanumericCode && !isCommand) {
+      console.log(`[DM Settings] Attempting to resolve potential invite code: ${potentialInviteCode}`);
+      try {
+        const joinRes = await aero.joinDock(potentialInviteCode);
+        const resolvedId = joinRes.dock?._id || joinRes.dock?.id || joinRes._id || joinRes.id;
+        const resolvedName = joinRes.dock?.name || joinRes.name || "Aero Group";
+        
+        if (resolvedId) {
+          dmSession.lastResolvedDock = { id: resolvedId, name: resolvedName };
           saveGroupDb(db);
-          logConfigChange(db, pc.dockId, senderId, senderName, changeDesc);
-          delete dmSession.pendingChange;
-          saveGroupDb(db);
-
-          // Notify group if slowmode was scheduled
-          if (pc.setting === "slowmodeSchedule" && pc.value.seconds > 0) {
-            try {
-              await aero.sendMessage(pc.dockId, `⏳ **[Slowmode Alert]:** Admin has enabled a scheduled slowmode of **${pc.value.seconds}s** for the next **${pc.value.durationMinutes} minutes**.`);
-            } catch (err) {
-              console.error(`[SlowmodeSchedule] Failed to notify dock ${pc.dockId}:`, err.message);
-            }
-          }
-
-          await aero.sendMessage(dockId, `✅ **Change Applied Successfully!**\n\n📢 *Change:* ${changeDesc} in group **${pc.dockName}**.`);
-          return;
-        } else if (cleanText === "/no" || cleanText === "no") {
-          delete dmSession.pendingChange;
-          saveGroupDb(db);
-          await aero.sendMessage(dockId, `❌ **Change Cancelled.** Koi setting update nahi ki gayi.`);
-          return;
-        } else {
-          await aero.sendMessage(dockId, `⚠️ **Awaiting Confirmation!** Please reply with **yes** (or **/yes**) to confirm the pending change, or **no** (or **/no**) to cancel it.`);
+          await aero.sendMessage(dockId, `✅ **Invite Code Resolved:** Group **"${resolvedName}"** select ho gaya hai. Ab aap is group me settings ya commands update stage kar sakte hain!`);
           return;
         }
+      } catch (err) {
+        console.warn(`[DM Settings] Failed to resolve invite code:`, err.message);
       }
+    }
 
-      const trimmedText = text.trim();
-      const lowerText = trimmedText.toLowerCase();
-
-      // Command 1: docks
+    // Check simple commands first
+    // Command 1: docks
       if (lowerText === "/docks" || lowerText === "docks") {
         let responseText = "📋 **Your Managed Groups (Docks):**\n\n";
         for (const d of adminDocks) {
@@ -2033,304 +2076,105 @@ I will automatically log it as a task and keep you updated! 😊`;
         return;
       }
 
-      // Command 2: greeting
-      const isGreetingCmd = lowerText === "/greeting" || lowerText === "greeting" || 
-                           lowerText.startsWith("/greeting ") || 
-                           (lowerText.startsWith("greeting ") && ["on", "off", "enable", "disable"].includes(trimmedText.split(/\s+/)[2]?.toLowerCase()));
-      if (isGreetingCmd) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        const status = parts[2]?.toLowerCase();
+      // Command 2: active
+      if (lowerText === "/active" || lowerText === "active" || lowerText.startsWith("active ") || lowerText.startsWith("/active ")) {
+        let responseText = "📋 **Active Group Schedules & Automations:**\n\n";
+        let foundAny = false;
         
-        if (!targetQuery || !["on", "off", "enable", "disable"].includes(status)) {
-          await aero.sendMessage(dockId, "❌ Usage: `/greeting <group_name_or_id> <on/off>`\nE.g.: `/greeting awara off`");
-          return;
-        }
-        
-        const targetDock = adminDocks.find(d => 
-          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-        );
-        
-        if (!targetDock) {
-          await aero.sendMessage(dockId, `❌ Match nahi mila. Please \`/docks\` command use karke sahi name/ID check karein.`);
-          return;
-        }
-        
-        const gSettings = getGroupSettings(db, targetDock.id);
-        const isON = ["on", "enable"].includes(status);
-        gSettings.greetingEnabled = isON;
-        saveGroupDb(db);
-        logConfigChange(db, targetDock.id, senderId, senderName, `Greeting message turned ${isON ? 'ON' : 'OFF'}`);
-        
-        await aero.sendMessage(dockId, `✅ Greeting message for **${targetDock.name}** has been turned ${isON ? "ON" : "OFF"}.`);
-        return;
-      }
-
-      // Command 3: setgreeting
-      if (lowerText === "/setgreeting" || lowerText === "setgreeting" || lowerText.startsWith("/setgreeting ") || lowerText.startsWith("setgreeting ")) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        if (!targetQuery) {
-          await aero.sendMessage(dockId, "❌ Usage: `/setgreeting <group_name_or_id> <message>`\nE.g.: `/setgreeting awara Hello {name}, welcome to {groupname}!`");
-          return;
-        }
-        const targetDock = adminDocks.find(d => 
-          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-        );
-        
-        if (!targetDock) {
-          await aero.sendMessage(dockId, `❌ Match nahi mila. Please \`/docks\` command use karke sahi name/ID check karein.`);
-          return;
-        }
-
-        const newGreeting = trimmedText.substring(trimmedText.indexOf(targetQuery) + targetQuery.length).trim();
-        if (!newGreeting) {
-          await aero.sendMessage(dockId, "❌ Please specify a welcome message.");
-          return;
-        }
-        
-        const gSettings = getGroupSettings(db, targetDock.id);
-        gSettings.greetingMessage = newGreeting;
-        saveGroupDb(db);
-        logConfigChange(db, targetDock.id, senderId, senderName, `Greeting message updated to: "${newGreeting}"`);
-        
-        await aero.sendMessage(dockId, `✅ Greeting message for **${targetDock.name}** updated to:\n"${newGreeting}"`);
-        return;
-      }
-
-      // Command 4: logs
-      const isLogsCmd = lowerText === "/logs" || lowerText === "logs" || 
-                        lowerText.startsWith("/logs ") || 
-                        (lowerText.startsWith("logs ") && adminDocks.some(d => {
-                          const target = trimmedText.split(/\s+/)[1]?.toLowerCase();
-                          return target && (d.id.toLowerCase() === target || d.name.toLowerCase().includes(target));
-                        }));
-      if (isLogsCmd) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        
-        if (!targetQuery) {
-          await aero.sendMessage(dockId, "❌ Usage: `/logs <group_name_or_id>`\nE.g.: `/logs awara`");
-          return;
-        }
-        
-        const targetDock = adminDocks.find(d => 
-          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-        );
-        
-        if (!targetDock) {
-          await aero.sendMessage(dockId, `❌ Match nahi mila. Please \`/docks\` command use karke sahi name/ID check karein.`);
-          return;
-        }
-        
-        const gSettings = getGroupSettings(db, targetDock.id);
-        const logList = gSettings.configLogs || [];
-        
-        if (logList.length === 0) {
-          await aero.sendMessage(dockId, `📋 No settings change logs found for **${targetDock.name}**.`);
-          return;
-        }
-        
-        let logMsg = `📋 **Recent 10 Configuration Logs for ${targetDock.name}:**\n\n`;
-        const displayLogs = logList.slice(0, 10);
-        displayLogs.forEach((l, idx) => {
-          const timeStr = new Date(l.timestamp).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
-          logMsg += `${idx + 1}. [${timeStr}] **${l.user}**: ${l.change}\n`;
-        });
-        
-        await aero.sendMessage(dockId, logMsg);
-        return;
-      }
-
-      // Command 5: broadcast
-      if (lowerText === "/broadcast" || lowerText === "broadcast" || lowerText.startsWith("/broadcast ") || lowerText.startsWith("broadcast ")) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        if (!targetQuery) {
-          await aero.sendMessage(dockId, "❌ Usage: `/broadcast <group_name_or_id_or_all> <message>`\nE.g.: `/broadcast awara Welcome to our group!`");
-          return;
-        }
-
-        let targetDocks = [];
-        if (targetQuery.toLowerCase() === "all") {
-          targetDocks = adminDocks;
-        } else {
-          const queries = targetQuery.split(",");
-          for (const q of queries) {
-            const found = adminDocks.find(d => 
-              d.id === q.trim() || d.name.toLowerCase().includes(q.trim().toLowerCase())
-            );
-            if (found) targetDocks.push(found);
-          }
-        }
-
-        if (targetDocks.length === 0) {
-          await aero.sendMessage(dockId, `❌ Koi matching group nahi mila. Sahi name/ID check karein.`);
-          return;
-        }
-
-        const msgText = trimmedText.substring(trimmedText.indexOf(targetQuery) + targetQuery.length).trim();
-        if (!msgText && !data.message?.image && !data.message?.audio && !data.message?.document) {
-          await aero.sendMessage(dockId, "❌ Please specify a message or attachment to broadcast.");
-          return;
-        }
-
-        let imageUri = data.message?.image || null;
-        let docUri = data.message?.document || null;
-        let voiceUri = data.message?.audio || null;
-
-        const prefix = `📢 **ANNOUNCEMENT (Admin):**\n\n`;
-        const broadcastText = msgText ? prefix + msgText : prefix;
-
-        let successCount = 0;
-        for (const tDock of targetDocks) {
-          try {
-            if (imageUri) {
-              await aero.sendMessage(tDock.id, broadcastText, imageUri);
-            } else if (docUri) {
-              await aero.sendMessage(tDock.id, broadcastText, null, null, docUri);
-            } else if (voiceUri) {
-              await aero.sendMessage(tDock.id, broadcastText, null, null, voiceUri, null, true);
-            } else {
-              await aero.sendMessage(tDock.id, broadcastText);
-            }
-            successCount++;
-          } catch (err) {
-            console.error(`[Broadcast] Failed to send to ${tDock.name}:`, err.message);
-          }
-        }
-
-        await aero.sendMessage(dockId, `✅ Announcement successfully broadcasted to ${successCount}/${targetDocks.length} groups.`);
-        return;
-      }
-
-      // Command 6: createcommand
-      if (lowerText === "/createcommand" || lowerText === "createcommand" || lowerText.startsWith("/createcommand ") || lowerText.startsWith("createcommand ")) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        const trigger = parts[2];
-        if (!targetQuery || !trigger) {
-          await aero.sendMessage(dockId, "❌ Usage: `/createcommand <group_name_or_id> <trigger_with_slash> <response>`\nE.g.: `/createcommand awara /insta https://instagram.com/mygroup`");
-          return;
-        }
-
-        const targetDock = adminDocks.find(d => 
-          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-        );
-        if (!targetDock) {
-          await aero.sendMessage(dockId, `❌ Match nahi mila. Sahi group name/ID use karein.`);
-          return;
-        }
-
-        if (!trigger.startsWith("/")) {
-          await aero.sendMessage(dockId, `❌ Trigger commands '/' se start hone chahiye. E.g.: \`/insta\``);
-          return;
-        }
-
-        const searchStr = trigger;
-        const triggerIdx = trimmedText.indexOf(searchStr);
-        const responseText = trimmedText.substring(triggerIdx + searchStr.length).trim();
-
-        if (!responseText) {
-          await aero.sendMessage(dockId, "❌ Please specify a response text.");
-          return;
-        }
-
-        const gSettings = getGroupSettings(db, targetDock.id);
-        if (!gSettings.customCommands) gSettings.customCommands = {};
-        gSettings.customCommands[trigger.toLowerCase()] = responseText;
-        saveGroupDb(db);
-        logConfigChange(db, targetDock.id, senderId, senderName, `Custom command ${trigger} created/updated`);
-
-        await aero.sendMessage(dockId, `✅ Custom command **${trigger}** successfully registered for **${targetDock.name}**.`);
-        return;
-      }
-
-      // Command 7: deletecommand
-      if (lowerText === "/deletecommand" || lowerText === "deletecommand" || lowerText.startsWith("/deletecommand ") || lowerText.startsWith("deletecommand ")) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        const trigger = parts[2];
-        if (!targetQuery || !trigger) {
-          await aero.sendMessage(dockId, "❌ Usage: `/deletecommand <group_name_or_id> <trigger>`\nE.g.: `/deletecommand awara /insta`");
-          return;
-        }
-
-        const targetDock = adminDocks.find(d => 
-          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-        );
-        if (!targetDock) {
-          await aero.sendMessage(dockId, `❌ Match nahi mila. Sahi group name/ID use karein.`);
-          return;
-        }
-
-        const gSettings = getGroupSettings(db, targetDock.id);
-        if (!gSettings.customCommands || !gSettings.customCommands[trigger.toLowerCase()]) {
-          await aero.sendMessage(dockId, `❌ Command **${trigger}** is group me registered nahi hai.`);
-          return;
-        }
-
-        delete gSettings.customCommands[trigger.toLowerCase()];
-        saveGroupDb(db);
-        logConfigChange(db, targetDock.id, senderId, senderName, `Custom command ${trigger} deleted`);
-
-        await aero.sendMessage(dockId, `✅ Custom command **${trigger}** deleted for **${targetDock.name}**.`);
-        return;
-      }
-
-      // Command 8: slowmode_schedule
-      if (lowerText === "/slowmode_schedule" || lowerText === "slowmode_schedule" || lowerText.startsWith("/slowmode_schedule ") || lowerText.startsWith("slowmode_schedule ")) {
-        const parts = trimmedText.split(/\s+/);
-        const targetQuery = parts[1];
-        const secondsStr = parts[2];
-        const durationStr = parts[3];
-
-        if (!targetQuery || !secondsStr || !durationStr) {
-          await aero.sendMessage(dockId, "❌ Usage: `/slowmode_schedule <group_name_or_id> <slowmode_seconds> <duration_minutes>`\nE.g.: `/slowmode_schedule awara 30 120` (Sets 30s slowmode for 2 hours)");
-          return;
-        }
-
-        const targetDock = adminDocks.find(d => 
-          d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-        );
-        if (!targetDock) {
-          await aero.sendMessage(dockId, `❌ Match nahi mila. Sahi group name/ID use karein.`);
-          return;
-        }
-
-        const seconds = parseInt(secondsStr, 10);
-        const durationMin = parseInt(durationStr, 10);
-
-        if (isNaN(seconds) || seconds < 0 || isNaN(durationMin) || durationMin <= 0) {
-          await aero.sendMessage(dockId, "❌ Invalid inputs. Seconds must be >= 0 and duration in minutes must be > 0.");
-          return;
-        }
-
-        const gSettings = getGroupSettings(db, targetDock.id);
-        gSettings.slowmodeSeconds = seconds;
-        
-        if (seconds === 0) {
-          gSettings.slowmodeSchedule = null;
-          logConfigChange(db, targetDock.id, senderId, senderName, `Slowmode disabled`);
-          await aero.sendMessage(dockId, `✅ Slowmode disabled for **${targetDock.name}**.`);
-        } else {
-          const endTime = Date.now() + durationMin * 60 * 1000;
-          gSettings.slowmodeSchedule = { seconds, endTime };
-          logConfigChange(db, targetDock.id, senderId, senderName, `Slowmode set to ${seconds}s for ${durationMin} minutes`);
-          await aero.sendMessage(dockId, `✅ Slowmode of **${seconds}s** scheduled for **${durationMin} mins** in **${targetDock.name}**.`);
+        for (const d of adminDocks) {
+          const gSettings = getGroupSettings(db, d.id);
+          let dockInfo = "";
           
-          try {
-            await aero.sendMessage(targetDock.id, `⏳ **[Slowmode Alert]:** Admin has enabled a scheduled slowmode of **${seconds}s** for the next **${durationMin} minutes**.`);
-          } catch (err) {
-            console.error(`[SlowmodeSchedule] Failed to notify dock ${targetDock.id}:`, err.message);
+          if (gSettings.slowmodeSchedule && gSettings.slowmodeSchedule.endTime > Date.now()) {
+            const remMin = Math.ceil((gSettings.slowmodeSchedule.endTime - Date.now()) / 60000);
+            dockInfo += `- ⏳ **Slowmode**: Active (${gSettings.slowmodeSeconds}s, ${remMin} mins remaining)\n`;
+          }
+          if (gSettings.automations && gSettings.automations.length > 0) {
+            dockInfo += `- 🤖 **Automations**:\n`;
+            gSettings.automations.forEach(a => {
+              if (a.type === "daily_news") {
+                dockInfo += `  * Daily News at ${a.time}\n`;
+              } else if (a.type === "daily_reminder") {
+                dockInfo += `  * Daily Reminder at ${a.time} ("${a.task}")\n`;
+              }
+            });
+          }
+          
+          if (dockInfo) {
+            foundAny = true;
+            responseText += `• **Group: ${d.name}**\n${dockInfo}\n`;
           }
         }
         
-        saveGroupDb(db);
+        if (!foundAny) {
+          responseText += "_No active slowmodes or dynamic automations configured currently._\n";
+        }
+        
+        loadReminders();
+        const userReminders = remindersCache.filter(r => r.userId === senderId);
+        if (userReminders.length > 0) {
+          responseText += `\n⏰ **Upcoming Reminders Set By You:**\n`;
+          userReminders.forEach((r, idx) => {
+            const timeStr = new Date(r.triggerTimeMs).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+            responseText += `${idx + 1}. [${timeStr}] Target: ${r.target === "me" ? "Self" : "Group"}, Task: *${r.task}*\n`;
+          });
+        }
+        
+        await aero.sendMessage(dockId, responseText);
         return;
       }
 
-      // Text-Only conversational Guide AI (dynamic NLU assistant)
+      // Command 3: pending
+      if (lowerText === "/pending" || lowerText === "pending" || lowerText.startsWith("pending ") || lowerText.startsWith("/pending ")) {
+        let responseText = "";
+        
+        const queue = dmSession.queue || [];
+        if (queue.length > 0) {
+          responseText += `📋 **Staged Settings Queue (Pending Confirmation):**\n`;
+          queue.forEach((item, idx) => {
+            responseText += `${idx + 1}. **${item.dockName}**: ${item.displayText}\n`;
+          });
+          responseText += `\n💡 *Tip:* Send **finalize** to apply these changes or **clear** to empty the queue.\n\n`;
+        } else {
+          responseText += `📋 **Staged Settings Queue:** Empty.\n\n`;
+        }
+        
+        const issuesDbPath = path.join(__dirname, "..", "db", "issues_database.json");
+        let issuesList = [];
+        if (fs.existsSync(issuesDbPath)) {
+          try {
+            const issuesDb = JSON.parse(fs.readFileSync(issuesDbPath, "utf-8"));
+            issuesList = issuesDb.issues || [];
+          } catch (err) {
+            console.error("Failed to parse issues DB:", err.message);
+          }
+        }
+        
+        const pendingIssues = issuesList.filter(i => i.status !== "done" && i.status !== "resolved");
+        if (pendingIssues.length > 0) {
+          responseText += `🐛 **Pending Support/Bug Issues:**\n`;
+          pendingIssues.slice(0, 5).forEach((i, idx) => {
+            responseText += `${idx + 1}. [Issue #${i.id}] **${i.userName}** in dock **${i.dockName || i.dockId}**: "${(i.text || "").substring(0, 60)}..." (Status: ${i.status || "open"})\n`;
+          });
+        } else {
+          responseText += `🐛 **Pending Issues:** None.\n`;
+        }
+        
+        await aero.sendMessage(dockId, responseText);
+        return;
+      }
+
+      if (lowerText === "finalize" || lowerText === "/finalize" || lowerText === "yes" || lowerText === "/yes") {
+        await handleFinalizeAction(dockId, senderId, senderName, db, dmSession, adminDocks);
+        return;
+      }
+      if (lowerText === "clear" || lowerText === "/clear" || lowerText === "no" || lowerText === "/no") {
+        dmSession.queue = [];
+        saveGroupDb(db);
+        await aero.sendMessage(dockId, "❌ **Staged implementation queue cleared.**");
+        return;
+      }
+
       if (text) {
         try {
           const { providers } = require("./providers");
@@ -2341,55 +2185,95 @@ I will automatically log it as a task and keep you updated! 😊`;
             dockListText += `- Name: "${d.name}", ID: "${d.id}", Greeting Status: ${gSettings.greetingEnabled !== false ? "ON" : "OFF"}, Custom Greeting: "${gSettings.greetingMessage || "none"}", Language: "${gSettings.language || "hinglish"}", Max Warnings: ${gSettings.maxWarnings !== undefined ? gSettings.maxWarnings : 3}, Warning Action: "${gSettings.warningAction || "mute"}"\n`;
           });
 
-          // Step 1: Run NLU Parser to see if they are requesting a change or logs
-          const parserPrompt = `You are a group settings request parser. Your task is to analyze the user's natural language message and extract settings change requests or log requests.
+          const currentQueue = dmSession.queue || [];
+          const queueText = currentQueue.length > 0
+            ? JSON.stringify(currentQueue, null, 2)
+            : "[] (Queue is currently empty)";
+
+          let resolvedDockContextText = "";
+          if (dmSession.lastResolvedDock) {
+            resolvedDockContextText = `\nLast resolved group from invite code (use this if the user says "isme" / "this group" / "this dock" or does not specify which group when there is ambiguity): Name: "${dmSession.lastResolvedDock.name}", ID: "${dmSession.lastResolvedDock.id}"\n`;
+          }
+
+          const parserPrompt = `You are a humanoid group settings manager and NLU parsing assistant.
+The user is talking to you in direct messages to build an implementation queue of configuration changes for their group chats.
 
 The user manages the following group chats (docks):
 ${dockListText}
+${resolvedDockContextText}
 
-You must return a JSON object representing the action the user wants to perform.
-Valid actions are:
-1. "change_setting": when the user wants to enable/disable or modify any of these configurations:
+The current queue of pending changes (already staged):
+${queueText}
+
+Your task is to analyze the user's message and determine the correct action.
+Supported actions:
+1. "update_queue": when the user wants to stage a new setting change, modify a queued change, copy a change to other groups, or remove a group/setting change from the queue.
+   You must return the COMPLETE updated queue list under the "queue" key.
+   When updating the queue:
+   - To add a new change: Append it to the current queue.
+   - To remove a change (e.g. "supreme aur awara me kar", then "awara me mt krio"): filter out the matching change for that dock/setting from the queue.
+   - To copy/replicate a change (e.g. "yehi same greeting supreme baddie aur awara me krde"): look at the existing queue item (e.g., greetingMessage for dead chat) and replicate/duplicate it for supreme baddie and awara, appending them to the queue.
+   
+   Each item in the "queue" array must be:
+   {
+     "dockId": "absolute dock/group ID",
+     "dockName": "group name",
+     "setting": "greetingEnabled" | "greetingMessage" | "aiModel" | "botDisabled" | "aiRepliesDisabled" | "memesDisabled" | "systemPromptExtension" | "bannedWords_add" | "bannedWords_delete" | "maxWarnings" | "warningAction" | "rules" | "language" | "customCommand_add" | "customCommand_delete" | "slowmodeSchedule" | "automation_add" | "automation_delete" | "sleepMode",
+     "value": value (any type, depending on setting),
+     "trigger": "trigger command" (only for custom commands),
+     "displayText": "user friendly description of setting change, e.g., 'Turn AI replies OFF'",
+     "previewText": "a preview of the change, e.g., 'Members will not get AI replies on mentions.'"
+   }
+
+   Settings details:
    - "greetingEnabled" (value: true or false)
    - "greetingMessage" (value: string text)
-   - "aiModel" (value: string name of model, e.g. "groq", "cerebras")
+   - "aiModel" (value: string model name, e.g., "groq", "cerebras")
    - "botDisabled" (value: true or false)
-   - "systemPromptExtension" (value: string description of AI personality/persona)
-   - "bannedWords_add" (value: string word to blacklist)
-   - "bannedWords_delete" (value: string word to remove from blacklist)
-   - "maxWarnings" (value: number of max warning counts)
-   - "warningAction" (value: "mute" or "kick" or "ban")
+   - "aiRepliesDisabled" (value: true or false)
+   - "memesDisabled" (value: true or false)
+   - "systemPromptExtension" (value: string describing bot persona)
+   - "bannedWords_add" (value: string word)
+   - "bannedWords_delete" (value: string word)
+   - "maxWarnings" (value: number)
+   - "warningAction" (value: "mute" | "kick" | "ban")
    - "rules" (value: string rules text)
-   - "language" (value: "english" or "hindi" or "hinglish")
-   - "customCommand_add" (value: string response text, trigger: string trigger command e.g. "/insta")
+   - "language" (value: "english" | "hindi" | "hinglish")
+   - "customCommand_add" (value: string response, trigger: string trigger command e.g. "/insta")
    - "customCommand_delete" (trigger: string trigger command e.g. "/insta")
    - "slowmodeSchedule" (value: { seconds: number, durationMinutes: number })
+   - "automation_add" (value: { type: "daily_news" | "daily_reminder", time: "HH:MM" in 24h format, task: string, mentions: array of strings })
+   - "automation_delete" (value: type of automation, e.g. "daily_news" or "daily_reminder" or "all")
+   - "sleepMode" (value: { enabled: true/false, timeoutHours: number })
 
-2. "view_logs": when the user wants to see the settings change history for a group.
-   - optionally, "userFilter" can be set if they mention a username to filter logs for (e.g. "yamdut").
-
-3. "guide": when they are asking a question about how commands work, how to manage groups, or general assistance, or if no settings change matches.
+2. "finalize": when the user confirms they want to apply/execute/finalize all queued changes (e.g., "haa finalize krde", "apply kar do", "kar do", "done").
+3. "clear": when the user wants to discard or clear all staged changes in the queue (e.g., "clear queue", "sab cancel kar do").
+4. "view_queue": when the user wants to view the current queue (e.g., "what's in queue", "queue dikhao").
+5. "view_automations": when the user wants to check active automation tasks or crons for a group (e.g., "active task bata dead dock ke").
+6. "view_logs": when the user wants to view config logs for a group.
+7. "guide": conversational help, questions about rules, or general chatting.
 
 JSON Output Format:
 {
-  "action": "change_setting" | "view_logs" | "guide",
-  "dockQuery": "name or ID of target group referenced by the user (or empty string)",
-  "setting": "setting_name" (only for change_setting),
-  "value": value (any type, only for change_setting),
-  "trigger": "trigger_command" (only for custom commands),
-  "userFilter": "username" (only for view_logs with username filter, otherwise null)
+  "action": "update_queue" | "finalize" | "clear" | "view_queue" | "view_automations" | "view_logs" | "guide",
+  "queue": [ ... ],
+  "dockQuery": "group name or ID referenced (for view_logs, view_automations)",
+  "userFilter": "username (only for view_logs with user filter, otherwise null)",
+  "guideResponse": "your conversational response in Hinglish (only for action: 'guide')"
 }
 
 CRITICAL RULES:
-- Never extract or use "aiSlowmodeSec" setting. If the user mentions slowmode or cooldown (e.g. "slowmode set kar 15s", "slowmode off kar", "slowmode band kar"), it is ALWAYS group chat/dock slowmode (slowmodeSchedule).
-- For disabling slowmode ("slowmode off", "slowmode band", etc.), use setting: "slowmodeSchedule" with value: { seconds: 0, durationMinutes: 0 }.
-- If the user specifies a slowmode duration in seconds but does not specify a timeline in minutes, default durationMinutes to 60.
-- If the user specifies a change, extract it accurately. E.g., "awara group me bot ko ek funny shayar bana de" -> action: "change_setting", dockQuery: "awara", setting: "systemPromptExtension", value: "funny shayar".
-- If the user asks for logs of a specific user in a group: E.g., "yamdut ne dead chat me kya changes kiye" -> action: "view_logs", dockQuery: "dead chat", userFilter: "yamdut".
-- Return ONLY the raw JSON object. Do not wrap in markdown code blocks, do not write explanations. Just return the JSON object.`;
+- Never extract "aiSlowmodeSec" setting. Use "slowmodeSchedule".
+- AMBIGUITY RESOLUTION: If the user requests changes for a group by name (e.g., "awara"), and there are multiple groups with that same name (or matching that name) in the managed groups list, you MUST NOT proceed with "update_queue". Instead, return action: "guide" and explain in guideResponse that there are multiple groups with that name, list them with their IDs, and ask them to clarify by specifying the Group ID (or last 4 characters of the ID).
+- Return ONLY raw JSON. No markdown code blocks, no explanations.`;
+
+          const { HermesMemory } = require("./hermes-memory");
+          const history = HermesMemory.getHistoryMessages(senderId) || [];
+          const recentHistory = history.slice(-6);
 
           const parseMessages = [
             { role: "system", content: parserPrompt },
+            ...recentHistory,
             { role: "user", content: text }
           ];
 
@@ -2414,119 +2298,106 @@ CRITICAL RULES:
             console.warn("[Admin DM Parser] Failed to parse JSON, falling back to guide.", rawContent);
           }
 
-          if (parsed.action === "change_setting" && parsed.setting) {
-            const targetQuery = parsed.dockQuery || "";
-            // Find target dock only in docks the user manages
-            const targetDock = adminDocks.find(d => 
-              d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
-            );
+          if (parsed.action === "update_queue" && Array.isArray(parsed.queue)) {
+            const allowedDockIds = adminDocks.map(d => d.id);
+            dmSession.queue = parsed.queue.filter(item => allowedDockIds.includes(item.dockId));
+            
+            // Format greetingMessage placeholders just in case
+            dmSession.queue.forEach(item => {
+              if (item.setting === "greetingMessage" && item.value) {
+                let cleanedVal = String(item.value);
+                cleanedVal = cleanedVal.replace(/\b(group name|dock name)\b/gi, "{groupname}");
+                cleanedVal = cleanedVal.replace(/\b(member name|user name)\b/gi, "{name}");
+                cleanedVal = cleanedVal.replace(/\b(group|dock)\b/gi, "{groupname}");
+                cleanedVal = cleanedVal.replace(/\b(user|username|member|naam)\b/gi, "{name}");
+                cleanedVal = cleanedVal.replace(/{+/g, "{").replace(/}+/g, "}");
+                item.value = cleanedVal;
+              }
+            });
 
-            if (!targetDock) {
-              await aero.sendMessage(dockId, `❓ Aap kis group/dock me ye change karna chahte hain?\n\nHumne aapka change detect kiya hai, lekin correct group nahi mila. Reply karein group ke name ke sath, jaise:\n` + adminDocks.map(d => `- ${d.name}`).join("\n"));
+            saveGroupDb(db);
+
+            if (dmSession.queue.length === 0) {
+              await aero.sendMessage(dockId, "📋 **Staged Queue is currently empty.**");
               return;
             }
 
-            if (parsed.setting === "greetingMessage" && parsed.value) {
-              let cleanedVal = String(parsed.value);
-              // Multi-word placeholders first
-              cleanedVal = cleanedVal.replace(/\b(group name|dock name)\b/gi, "{groupname}");
-              cleanedVal = cleanedVal.replace(/\b(member name|user name)\b/gi, "{name}");
-              // Single-word placeholders next
-              cleanedVal = cleanedVal.replace(/\b(group|dock)\b/gi, "{groupname}");
-              cleanedVal = cleanedVal.replace(/\b(user|username|member|naam)\b/gi, "{name}");
-              // Cleanup bracket issues
-              cleanedVal = cleanedVal.replace(/{+/g, "{").replace(/}+/g, "}");
-              parsed.value = cleanedVal;
-            }
-
-            let displayText = "";
-            let previewText = "";
-            const val = parsed.value;
-
-            if (parsed.setting === "greetingEnabled") {
-              displayText = `Turn greeting messages ${val ? 'ON' : 'OFF'}`;
-              previewText = `Greeting status will be ${val ? 'Active' : 'Disabled'} for new members joining the group.`;
-            } else if (parsed.setting === "greetingMessage") {
-              displayText = `Set custom greeting message to: "${val}"`;
-              previewText = `A new user joining the group will see:\n"${String(val).replace(/{username}/gi, "@Rohan").replace(/{name}/gi, "Rohan").replace(/{groupname}/gi, targetDock.name)}"`;
-            } else if (parsed.setting === "aiModel") {
-              displayText = `Change AI Model to: ${val}`;
-              previewText = `Group mention responses will use the "${val}" provider.`;
-            } else if (parsed.setting === "aiSlowmodeSec") {
-              displayText = `Set AI Cooldown slowmode to ${val} seconds`;
-              previewText = `Users will have to wait ${val}s between asking consecutive AI questions.`;
-            } else if (parsed.setting === "botDisabled") {
-              displayText = `Turn Bot ${val ? 'OFF' : 'ON'} (botDisabled = ${val})`;
-              previewText = `The bot will be ${val ? 'Disabled' : 'Enabled'} in the group chat.`;
-            } else if (parsed.setting === "systemPromptExtension") {
-              displayText = `Set AI Persona prompt to: "${val}"`;
-              previewText = `The bot's group replies will be instructed with: "${val}"`;
-            } else if (parsed.setting === "bannedWords_add") {
-              displayText = `Add "${val}" to banned words list`;
-              previewText = `If any member sends a message containing "${val}", the bot will delete/warn them.`;
-            } else if (parsed.setting === "bannedWords_delete") {
-              displayText = `Remove "${val}" from banned words list`;
-              previewText = `Messages containing "${val}" will no longer trigger warnings.`;
-            } else if (parsed.setting === "maxWarnings") {
-              displayText = `Set maximum warnings to ${val}`;
-              previewText = `Users will receive up to ${val} warnings before the penalty action is executed.`;
-            } else if (parsed.setting === "warningAction") {
-              displayText = `Set warning limit penalty action to: ${val}`;
-              previewText = `When a user exceeds the warning threshold, they will be: ${String(val).toUpperCase()}.`;
-            } else if (parsed.setting === "rules") {
-              displayText = `Update group rules`;
-              previewText = `New rules returned by /rules:\n"${val}"`;
-            } else if (parsed.setting === "language") {
-              displayText = `Change group language to ${val}`;
-              previewText = `Default warnings and default welcome responses will be sent in ${String(val).toUpperCase()}.`;
-            } else if (parsed.setting === "customCommand_add") {
-              displayText = `Register custom command ${parsed.trigger} -> "${val}"`;
-              previewText = `When anyone types "${parsed.trigger}" in chat, the bot will auto-reply:\n"${val}"`;
-            } else if (parsed.setting === "customCommand_delete") {
-              displayText = `Delete custom command ${parsed.trigger}`;
-              previewText = `The trigger "${parsed.trigger}" will no longer auto-respond.`;
-            } else if (parsed.setting === "slowmodeSchedule") {
-              const secs = val?.seconds || 0;
-              const mins = val?.durationMinutes || 0;
-              displayText = `Enable scheduled slowmode of ${secs}s for ${mins} minutes`;
-              previewText = `Chat slowmode of ${secs}s will be active until scheduled timer expires.`;
-            } else {
-              displayText = `Change setting "${parsed.setting}" to: ${JSON.stringify(val)}`;
-              previewText = `Apply setting update to group config.`;
-            }
-
-            if (!db.dmSession) db.dmSession = {};
-            db.dmSession[senderId] = {
-              pendingChange: {
-                dockId: targetDock.id,
-                dockName: targetDock.name,
-                setting: parsed.setting,
-                value: val,
-                trigger: parsed.trigger,
-                displayText,
-                previewText
+            let queueMsg = `📋 **Implementation List (Queue):**\n\n`;
+            dmSession.queue.forEach((item, idx) => {
+              queueMsg += `${idx + 1}. **${item.dockName}**: ${item.displayText}\n`;
+              if (item.previewText) {
+                queueMsg += `   *Preview:* ${item.previewText}\n`;
               }
-            };
-            saveGroupDb(db);
-
-            const confirmMsg = `✍️ **Confirm Settings Update**
-
-Aapne group **${targetDock.name}** me ye change karne ko bola hai:
-👉 **Change:** ${displayText}
-
-📝 **Example / Preview:**
-${previewText}
-
----
-⚠️ Kya aap is change ko apply karna chahte hain? 
-Reply karein **yes** (ya **/yes**) confirm karne ke liye, ya **no** (ya **/no**) cancel karne ke liye.`;
-            await aero.sendMessage(dockId, confirmMsg);
+            });
+            queueMsg += `\n💡 *Tip:* Aur changes add karne ke liye batayein (e.g. same changes copy karna ya remove karna). Apply karne ke liye **finalize** likhein, aur cancel karne ke liye **clear** likhein.`;
+            await aero.sendMessage(dockId, queueMsg);
             return;
-          } 
-          
+          }
+
+          if (parsed.action === "finalize") {
+            await handleFinalizeAction(dockId, senderId, senderName, db, dmSession, adminDocks);
+            return;
+          }
+
+          if (parsed.action === "clear") {
+            dmSession.queue = [];
+            saveGroupDb(db);
+            await aero.sendMessage(dockId, "❌ **Staged implementation queue cleared.**");
+            return;
+          }
+
+          if (parsed.action === "view_queue") {
+            const queue = dmSession.queue || [];
+            if (queue.length === 0) {
+              await aero.sendMessage(dockId, "📋 **Queue is currently empty.**");
+              return;
+            }
+            let queueMsg = `📋 **Current Staged Changes:**\n\n`;
+            queue.forEach((item, idx) => {
+              queueMsg += `${idx + 1}. **${item.dockName}**: ${item.displayText}\n`;
+              if (item.previewText) {
+                queueMsg += `   *Preview:* ${item.previewText}\n`;
+              }
+            });
+            await aero.sendMessage(dockId, queueMsg);
+            return;
+          }
+
+          if (parsed.action === "view_automations") {
+            const targetQuery = parsed.dockQuery || "";
+            const targetDock = adminDocks.find(d => 
+              d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
+            );
+            if (!targetDock) {
+              await aero.sendMessage(dockId, `❓ Aap kis group ke active tasks dekhna chahte hain?\n\nReply karein group name ke sath, jaise:\n` + adminDocks.map(d => `- ${d.name}`).join("\n"));
+              return;
+            }
+            
+            const gSettings = getGroupSettings(db, targetDock.id);
+            const autos = gSettings.automations || [];
+            if (autos.length === 0) {
+              await aero.sendMessage(dockId, `📋 **${targetDock.name}** me koi active automation task nahi hai.`);
+              return;
+            }
+            
+            let autoMsg = `📋 **Active Automation Tasks for ${targetDock.name}:**\n\n`;
+            autos.forEach((a, idx) => {
+              const timeStr = a.time;
+              if (a.type === "daily_news") {
+                autoMsg += `${idx + 1}. **Daily News**: Har roz subha ${timeStr} bje news report post hogi.\n`;
+              } else if (a.type === "daily_reminder") {
+                const mentions = a.mentions && a.mentions.length > 0 ? ` (Mentions: ${a.mentions.join(", ")})` : "";
+                autoMsg += `${idx + 1}. **Daily Reminder**: Har roz subha ${timeStr} bje reminder message post hoga: "${a.task}"${mentions}.\n`;
+              } else {
+                autoMsg += `${idx + 1}. **Custom**: Type: ${a.type} at ${timeStr}\n`;
+              }
+            });
+            await aero.sendMessage(dockId, autoMsg);
+            return;
+          }
+
           if (parsed.action === "view_logs") {
             const targetQuery = parsed.dockQuery || "";
-            // Find target dock only in docks the user manages
             const targetDock = adminDocks.find(d => 
               d.id === targetQuery || d.name.toLowerCase().includes(targetQuery.toLowerCase())
             );
@@ -2574,10 +2445,15 @@ Reply karein **yes** (ya **/yes**) confirm karne ke liye, ya **no** (ya **/no**)
             return;
           }
 
+          if (parsed.action === "guide" && parsed.guideResponse) {
+            await aero.sendMessage(dockId, parsed.guideResponse);
+            return;
+          }
+
           // Fall through to guide AI for conversational requests
           const systemPrompt = `You are AeroGroupGuard Admin Assistant, a text-only AI designed to guide group admins in Direct Messages.
 You help admins manage their groups by explaining how to change settings and check logs.
-You can parse natural language settings updates (like "set slowmode in awara to 15s" or "set group persona to a funny joker") and confirm them dynamically.
+You can parse natural language settings updates (like "set slowmode in awara to 15s" or "set group persona to a funny joker") and stage them in a queue list.
 
 The user manages the following group chats:
 ${dockListText}
@@ -2590,24 +2466,16 @@ Available configurations they can request:
 5. Configure warning limits (max warnings) and threshold actions (mute, kick, ban).
 6. Update group rules text and primary language (english, hindi, hinglish).
 7. Manage custom command triggers (e.g. /rules, /insta).
-8. Enable/disable chat slowmode or scheduled slowmode (Note: AI response slowmode is NOT supported from DM, this is purely for the group chat's slowmode which restricts member message frequency).
-9. View activity/config change logs (optionally filtered by a specific username).
+8. Enable/disable chat slowmode or scheduled slowmode.
+9. Configure daily task automations (daily news bulletins, recurring reminders).
+10. View active task lists, config change logs, or pending issue queues.
 
 Your instructions:
 - Respond in Hinglish.
 - Be helpful, concise, and friendly.
-- When explaining how to change slowmode:
-  * Guide them on how to enable it, change it, or turn it off/disable it (e.g. "awara me slowmode band kar", "slowmode in awara 15s").
-  * Remind them that this sets the group chat slowmode (message limit for members) and that AI slowmode is not managed via DM.
-- When explaining how to change greetings:
-  * Explicitly guide them on how to turn it ON or OFF. Provide clear examples like:
-    "Greeting switch on/off karne ke liye simply likhein:
-    👉 'awara me greeting on kar' ya 'awara me greeting off kar'"
-  * Explain how to update/change the greeting welcome message:
-    "Custom greeting message change karne ke liye likhein:
-    👉 'awara me greeting change kar hey user welcome to group name'"
-  * Explicitly tell them: "Aap message me normal words jaise 'user', 'member', 'group name' ya 'dock name' likh sakte hain, bot unhe automatically {name} aur {groupname} ke technical templates me replace kar dega taaki actual welcome message me user ka tag aur group ka name sahi se populate ho ske!"
-- Keep the conversation strictly focused on guiding them. Tell them they can simply state what they want to change in their groups (e.g. "awara me rules badal do" or "dead chat ke yamdut ke logs dikha").`;
+- When explaining how to change settings:
+  * Remind them that setting changes are staged in an Implementation Queue first, and they can finalize them by saying "finalize" or cancel them by saying "clear".
+  * They can query active settings/schedules using "active" and pending queues/issues using "pending".`;
 
           const messages = [
             { role: "system", content: systemPrompt },
@@ -2689,6 +2557,18 @@ IMPORTANT:
   // --- Group Moderation & Command Handling ---
   const groupSettings = getGroupSettings(db, dockId);
   groupSettings.messageCount = (groupSettings.messageCount || 0) + 1;
+
+  if (isGroup) {
+    groupSettings.lastMessageTime = Date.now();
+    if (groupSettings.sleepModeEnabled && groupSettings.sleeping) {
+      groupSettings.sleeping = false;
+      saveGroupDb(db);
+      console.log(`[SleepMode] Waking up bot in dock ${dockId} due to message from ${senderName}`);
+      aero.sendMessage(dockId, "🤖 **[Wake Up Alert]:** Group activity detected! Bot is now active and awake.").catch(err => {
+        console.error("[SleepMode] Failed to send wake up notification:", err.message);
+      });
+    }
+  }
 
   if (senderId && senderId !== "unknown" && senderId !== "owner-1" && botUserId && senderId !== botUserId) {
     if (!groupSettings.members) groupSettings.members = {};
@@ -3485,7 +3365,7 @@ IMPORTANT:
       reply = null;
       handleRefereeCommand(dockId);
     } else if (cmdName === "makememe") {
-      if (groupSettings.botDisabled) return;
+      if (groupSettings.botDisabled || groupSettings.memesDisabled) return;
       reply = null;
       handleMakeMemeCommand(dockId, argsText, groupSettings);
     } else if (cmdName === "vibe") {
@@ -3516,8 +3396,8 @@ IMPORTANT:
       reply = null;
       handleAfkCommand(dockId, senderId, senderName, argsText, groupSettings);
     } else if (cmdName === "meme") {
-      if (groupSettings.botDisabled) {
-        console.log(`[BotControl] Bot is disabled for dock ${dockId}. Skipping meme command.`);
+      if (groupSettings.botDisabled || groupSettings.memesDisabled) {
+        console.log(`[BotControl] Memes disabled for dock ${dockId}. Skipping meme command.`);
         return;
       }
       reply = null;
@@ -3859,7 +3739,7 @@ IMPORTANT:
       }
     }
   } else if (isMention) {
-    if (groupSettings.botDisabled) {
+    if (groupSettings.botDisabled || groupSettings.aiRepliesDisabled) {
       console.log(`[BotControl] AI disabled for dock ${dockId}. Skipping AI reply.`);
       return;
     }
@@ -4268,7 +4148,10 @@ async function checkSlowmodeSchedules() {
     initDbPromise.then(() => {
       // Start background schedulers
       loadReminders();
-      setInterval(checkAndSendReminders, 20000);
+      setInterval(() => {
+        checkAndSendReminders().catch(console.error);
+        checkAndRunAutomations().catch(console.error);
+      }, 20000);
       setInterval(sendDailyDigests, 60000);
       setInterval(checkSlowmodeSchedules, 60000);
 
@@ -4666,6 +4549,15 @@ I will automatically log it as a task and keep you updated! 😊`;
     const groupSettings = getGroupSettings(db, webhookDockId);
     if (webhookDockId !== "unknown") {
       groupSettings.messageCount = (groupSettings.messageCount || 0) + 1;
+      groupSettings.lastMessageTime = Date.now();
+      if (groupSettings.sleepModeEnabled && groupSettings.sleeping) {
+        groupSettings.sleeping = false;
+        saveGroupDb(db);
+        console.log(`[SleepMode] Waking up bot via webhook in dock ${webhookDockId} due to message from ${senderName}`);
+        aero.sendMessage(webhookDockId, "🤖 **[Wake Up Alert]:** Group activity detected! Bot is now active and awake.").catch(err => {
+          console.error("[SleepMode] Failed to send webhook wake up notification:", err.message);
+        });
+      }
       
       const botUserId = aero.user?._id || aero.user?.id;
       if (senderId && senderId !== "unknown" && senderId !== "owner-1" && botUserId && senderId !== botUserId) {
@@ -4734,7 +4626,7 @@ I will automatically log it as a task and keep you updated! 😊`;
     let reply = null;
 
     if (isMention && !parsedCmd) {
-      if (groupSettings.botDisabled) {
+      if (groupSettings.botDisabled || groupSettings.aiRepliesDisabled) {
         console.log(`[BotControl] AI disabled via webhook for dock ${webhookDockId}. Skipping AI reply.`);
         return json(200, { ok: true, reason: "ai_disabled" });
       }
@@ -5010,7 +4902,7 @@ I will automatically log it as a task and keep you updated! 😊`;
           reply = null;
           handleRefereeCommand(webhookDockId);
         } else if (cmdName === "makememe") {
-          if (groupSettings.botDisabled) return;
+          if (groupSettings.botDisabled || groupSettings.memesDisabled) return;
           reply = null;
           handleMakeMemeCommand(webhookDockId, argsText, groupSettings);
         } else if (cmdName === "vibe") {
@@ -5041,8 +4933,8 @@ I will automatically log it as a task and keep you updated! 😊`;
           reply = null;
           handleAfkCommand(webhookDockId, senderId, senderName, argsText, groupSettings);
         } else if (cmdName === "meme") {
-          if (groupSettings.botDisabled) {
-            console.log(`[BotControl] Bot is disabled for dock ${webhookDockId}. Skipping webhook meme command.`);
+          if (groupSettings.botDisabled || groupSettings.memesDisabled) {
+            console.log(`[BotControl] Bot is disabled or memes disabled for dock ${webhookDockId}. Skipping webhook meme command.`);
             return;
           }
           reply = null;
@@ -5998,6 +5890,93 @@ async function checkAndSendReminders() {
   }
 }
 
+async function checkAndRunAutomations() {
+  try {
+    const db = loadGroupDb();
+    if (!db.groups) return;
+    
+    const now = new Date();
+    const formatterTime = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit", minute: "2-digit", hour12: false
+    });
+    const timeStr = formatterTime.format(now); // E.g., "10:00"
+    
+    const todayStr = now.toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" }); // E.g., "6/27/2026"
+    
+    let dbChanged = false;
+    
+    for (const dockId in db.groups) {
+      const gSettings = db.groups[dockId];
+      
+      // 1. Process daily automations
+      if (gSettings.automations && Array.isArray(gSettings.automations)) {
+        for (const auto of gSettings.automations) {
+          if (auto.time === timeStr && auto.lastExecutedDate !== todayStr) {
+            console.log(`[Automation] Triggering automation ${auto.id} (type: ${auto.type}) in dock ${dockId} at ${timeStr}`);
+            
+            auto.lastExecutedDate = todayStr;
+            dbChanged = true;
+            
+            executeSingleAutomation(dockId, auto).catch(err => {
+              console.error(`[Automation] Failed to execute automation ${auto.id}:`, err.message);
+            });
+          }
+        }
+      }
+      
+      // 2. Process Sleep Mode timeout
+      if (gSettings.sleepModeEnabled && !gSettings.sleeping) {
+        const lastMsgTime = gSettings.lastMessageTime || Date.now();
+        const timeoutMs = (gSettings.sleepTimeoutHours || 10) * 60 * 60 * 1000;
+        if (Date.now() - lastMsgTime > timeoutMs) {
+          console.log(`[SleepMode] Dock ${dockId} has been inactive for ${gSettings.sleepTimeoutHours || 10} hours. Putting bot to sleep.`);
+          gSettings.sleeping = true;
+          dbChanged = true;
+          
+          aero.sendMessage(dockId, `💤 **[Sleep Mode]:** Group has been inactive for ${gSettings.sleepTimeoutHours || 10} hours. Bot is now going to sleep to conserve resources. Send any message in the group to wake me up!`).catch(err => {
+            console.error(`[SleepMode] Failed to send sleep alert to dock ${dockId}:`, err.message);
+          });
+        }
+      }
+    }
+    
+    if (dbChanged) {
+      saveGroupDb(db);
+    }
+  } catch (err) {
+    console.error("[Automation] Error in checkAndRunAutomations:", err.message);
+  }
+}
+
+async function executeSingleAutomation(dockId, auto) {
+  if (auto.type === "daily_news") {
+    try {
+      console.log(`[Automation] Fetching daily news bulletin via groundedSearch...`);
+      const topic = auto.task && auto.task.trim() !== "" ? auto.task : "latest news in India today top headlines";
+      const searchResult = await providers.groundedSearch(topic);
+      const newsContent = searchResult.text || "No news updates found for today.";
+      const finalMsg = `📰 **DAILY NEWS BULLETIN (${topic})** 📰\n\n${newsContent}`;
+      await aero.sendMessage(dockId, finalMsg);
+      console.log(`[Automation] Daily news sent successfully to dock ${dockId}`);
+    } catch (err) {
+      console.error(`[Automation] Failed to execute daily news automation:`, err.message);
+    }
+  } else if (auto.type === "daily_reminder") {
+    try {
+      let mentionStr = "";
+      if (auto.mentions && auto.mentions.length > 0) {
+        mentionStr = auto.mentions.map(m => `@${m.replace(/^@/, "").trim()}`).join(" ") + " ";
+      }
+      const finalMsg = `🔔 **DAILY REMINDER** 🔔\n\n${mentionStr}Here is your scheduled reminder:\n*${auto.task}*`;
+      await aero.sendMessage(dockId, finalMsg);
+      console.log(`[Automation] Daily reminder sent successfully to dock ${dockId}`);
+    } catch (err) {
+      console.error(`[Automation] Failed to execute daily reminder automation:`, err.message);
+    }
+  }
+}
+
 let lastDigestDate = "";
 async function sendDailyDigests() {
   try {
@@ -6428,13 +6407,20 @@ You MUST respond in JSON format ONLY:
 {
   "target": "me" | "group",
   "task": "<the task description, e.g., 'go out with friends'>",
-  "triggerTimeMs": <target Unix timestamp in milliseconds when the reminder should fire>
+  "timeSpecification": {
+    "type": "relative" | "absolute",
+    "daysOffset": <number, e.g. 0 for today, 1 for tomorrow, 2 for day after tomorrow>,
+    "hoursOffset": <number, only for relative type>,
+    "minutesOffset": <number, only for relative type>,
+    "absoluteTime": "<string time format, e.g., '18:00:00' or '10:00:00' or '20:30:00'>",
+    "absoluteDate": "<string date format YYYY-MM-DD, optional if specific date given>"
+  }
 }
 
 Rules:
 - "target": Must be "me" if they say "/remind me..." or "group" if they say "/remind group...". Default to "me" if not specified.
 - "task": The activity to remind about, cleaned up and in clear language.
-- "triggerTimeMs": Must be a future timestamp. If the user specifies a time that has already passed today (e.g., it is 9 PM and they say "at 8 PM"), assume they mean the next occurrence (e.g., 8 PM tomorrow).
+- "timeSpecification": Cleanly extract the relative offsets or absolute time parameters. If the time specifies "aaj shaam 6 baje" (today evening 6 pm), daysOffset should be 0, and absoluteTime should be "18:00:00".
 
 Do not include markdown code block formatting in your response. Return raw JSON string.`;
 
@@ -6449,11 +6435,72 @@ Do not include markdown code block formatting in your response. Return raw JSON 
     const resText = (response.choices[0]?.message?.content || "").trim();
     const resJson = extractAndParseJson(resText);
 
-    if (!resJson.triggerTimeMs || !resJson.task) {
+    if (!resJson.timeSpecification || !resJson.task) {
       throw new Error("Could not parse schedule or task description.");
     }
 
-    if (resJson.triggerTimeMs <= Date.now()) {
+    let triggerTimeMs = Date.now();
+    const spec = resJson.timeSpecification;
+    
+    if (spec.type === "relative") {
+      const offset = (spec.daysOffset || 0) * 24 * 60 * 60 * 1000 +
+                     (spec.hoursOffset || 0) * 60 * 60 * 1000 +
+                     (spec.minutesOffset || 0) * 60 * 1000;
+      triggerTimeMs += offset;
+    } else if (spec.type === "absolute") {
+      const targetDate = new Date();
+      if (spec.daysOffset) {
+        targetDate.setDate(targetDate.getDate() + spec.daysOffset);
+      } else if (spec.absoluteDate) {
+        const parts = spec.absoluteDate.split("-");
+        targetDate.setFullYear(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      }
+      
+      let timeStr = spec.absoluteTime || "00:00:00";
+      let hours = 0;
+      let minutes = 0;
+      
+      const time12Regex = /(\d+):(\d+)\s*(AM|PM)/i;
+      const time24Regex = /(\d+):(\d+)(:(\d+))?/;
+      
+      if (time12Regex.test(timeStr)) {
+        const match = timeStr.match(time12Regex);
+        hours = parseInt(match[1]);
+        minutes = parseInt(match[2]);
+        const ampm = match[3].toUpperCase();
+        if (ampm === "PM" && hours < 12) hours += 12;
+        if (ampm === "AM" && hours === 12) hours = 0;
+      } else if (time24Regex.test(timeStr)) {
+        const match = timeStr.match(time24Regex);
+        hours = parseInt(match[1]);
+        minutes = parseInt(match[2]);
+      }
+      
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric", month: "2-digit", day: "2-digit"
+      });
+      const parts = formatter.formatToParts(targetDate);
+      const year = parts.find(p => p.type === 'year').value;
+      const month = parts.find(p => p.type === 'month').value;
+      const day = parts.find(p => p.type === 'day').value;
+      
+      const pad = (num) => String(num).padStart(2, '0');
+      const istIsoStr = `${year}-${month}-${day}T${pad(hours)}:${pad(minutes)}:00+05:30`;
+      triggerTimeMs = Date.parse(istIsoStr);
+      
+      if (triggerTimeMs <= Date.now() && !spec.absoluteDate && !spec.daysOffset) {
+        targetDate.setDate(targetDate.getDate() + 1);
+        const partsNext = formatter.formatToParts(targetDate);
+        const yNext = partsNext.find(p => p.type === 'year').value;
+        const mNext = partsNext.find(p => p.type === 'month').value;
+        const dNext = partsNext.find(p => p.type === 'day').value;
+        const nextIstIsoStr = `${yNext}-${mNext}-${dNext}T${pad(hours)}:${pad(minutes)}:00+05:30`;
+        triggerTimeMs = Date.parse(nextIstIsoStr);
+      }
+    }
+
+    if (triggerTimeMs <= Date.now()) {
       throw new Error("Trigger time must be in the future.");
     }
 
@@ -6464,7 +6511,7 @@ Do not include markdown code block formatting in your response. Return raw JSON 
       userName: senderName,
       target: resJson.target || "me",
       task: resJson.task,
-      triggerTimeMs: resJson.triggerTimeMs,
+      triggerTimeMs,
       createdAt: new Date().toISOString()
     };
 
@@ -6472,9 +6519,9 @@ Do not include markdown code block formatting in your response. Return raw JSON 
     remindersCache.push(reminder);
     saveReminders();
 
-    const timeDiffMs = resJson.triggerTimeMs - Date.now();
+    const timeDiffMs = triggerTimeMs - Date.now();
     const timeDiffMin = Math.round(timeDiffMs / 60000);
-    const targetTimeStr = new Date(resJson.triggerTimeMs).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const targetTimeStr = new Date(triggerTimeMs).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
     
     return `✅ Reminder set successfully!\nTarget: ${reminder.target === "me" ? `@${senderName}` : "Group"}\nTask: ${reminder.task}\nTime: ${targetTimeStr} (in ~${timeDiffMin} minutes)`;
   } catch (err) {
