@@ -2138,6 +2138,15 @@ I will automatically log it as a task and keep you updated! 😊`;
         } else {
           responseText += `📋 **Staged Settings Queue:** Empty.\n\n`;
         }
+
+        const drafts = dmSession.drafts || [];
+        if (drafts.length > 0) {
+          responseText += `📂 **Saved Drafts (Archived for Later):**\n`;
+          drafts.forEach((d, idx) => {
+            responseText += `${idx + 1}. **${d.name}** (${d.queue.length} items)\n`;
+          });
+          responseText += `💡 *Tip:* Load a draft with *load <draft_name>*\n\n`;
+        }
         
         const issuesDbPath = path.join(__dirname, "..", "db", "issues_database.json");
         let issuesList = [];
@@ -2252,13 +2261,18 @@ Supported actions:
 5. "view_automations": when the user wants to check active automation tasks or crons for a group (e.g., "active task bata dead dock ke").
 6. "view_logs": when the user wants to view config logs for a group.
 7. "guide": conversational help, questions about rules, or general chatting.
+8. "save_draft": when the user wants to save/archive the current staged changes or a specific task for later (e.g., "is queue ko save kar lo", "vaibhav wala automation save kar do").
+9. "load_draft": when the user wants to load/restore a saved draft/task back into the active queue (e.g., "load vaibhav", "vo vaibhav wala task wapas queue me laga do").
+10. "list_drafts": when the user wants to see what drafts are saved (e.g., "mere saved tasks dikhao", "list drafts").
 
 JSON Output Format:
 {
-  "action": "update_queue" | "finalize" | "clear" | "view_queue" | "view_automations" | "view_logs" | "guide",
+  "action": "update_queue" | "finalize" | "clear" | "view_queue" | "view_automations" | "view_logs" | "guide" | "save_draft" | "load_draft" | "list_drafts",
   "queue": [ ... ],
   "dockQuery": "group name or ID referenced (for view_logs, view_automations)",
   "userFilter": "username (only for view_logs with user filter, otherwise null)",
+  "draftName": "a descriptive name for the draft when saving (e.g., 'Vaibhav meeting reminder')",
+  "draftQuery": "search query / name of draft when loading (e.g., 'Vaibhav')",
   "guideResponse": "your conversational reply/feedback in Hinglish. You MUST provide this for ALL actions (e.g. explain what you updated in queue, explain why you added/removed/copied a group settings item, confirm finalisation, or guide them)."
 }
 
@@ -2386,6 +2400,81 @@ CRITICAL RULES:
               }
             });
             await aero.sendMessage(dockId, queueMsg);
+            return;
+          }
+
+          if (parsed.action === "save_draft") {
+            const draftQueue = (Array.isArray(parsed.queue) && parsed.queue.length > 0)
+              ? parsed.queue
+              : (dmSession.queue || []);
+              
+            if (draftQueue.length === 0) {
+              await aero.sendMessage(dockId, "❓ Save karne ke liye active queue me koi item nahi mila, aur na hi aapne message me koi specific change details diye hain. Pehle task stage karein!");
+              return;
+            }
+
+            if (!dmSession.drafts) dmSession.drafts = [];
+            const draftId = "draft-" + Math.random().toString(36).substring(2, 10);
+            const draftName = parsed.draftName || "Saved Task";
+            dmSession.drafts.push({
+              id: draftId,
+              name: draftName,
+              timestamp: Date.now(),
+              queue: [...draftQueue]
+            });
+            saveGroupDb(db);
+
+            let feedback = `✅ **Draft Saved:** Staged task/changes ko **"${draftName}"** naam ke sath save kar diya gaya hai!`;
+            if (parsed.guideResponse) {
+              feedback = `${parsed.guideResponse}\n\n${feedback}`;
+            }
+            await aero.sendMessage(dockId, feedback);
+            return;
+          }
+
+          if (parsed.action === "load_draft") {
+            const drafts = dmSession.drafts || [];
+            const query = (parsed.draftQuery || "").toLowerCase();
+            const matched = drafts.find(d => d.name.toLowerCase().includes(query) || d.id === query);
+
+            if (!matched) {
+              await aero.sendMessage(dockId, `❓ Mujhe "${parsed.draftQuery}" naam ka koi saved draft nahi mila. Aap /pending kehkar drafts ki list check kar sakte hain.`);
+              return;
+            }
+
+            if (!dmSession.queue) dmSession.queue = [];
+            dmSession.queue = [...dmSession.queue, ...matched.queue];
+            saveGroupDb(db);
+
+            let feedback = `✅ **Draft Loaded:** '${matched.name}' ko active staged queue me wapas load kar liya hai!`;
+            if (parsed.guideResponse) {
+              feedback = `${parsed.guideResponse}\n\n${feedback}`;
+            }
+            await aero.sendMessage(dockId, feedback);
+            return;
+          }
+
+          if (parsed.action === "list_drafts") {
+            const drafts = dmSession.drafts || [];
+            if (drafts.length === 0) {
+              await aero.sendMessage(dockId, "📂 **Saved Drafts List:** Empty. Koi saved drafts nahi hain.");
+              return;
+            }
+            let msg = "";
+            if (parsed.guideResponse) {
+              msg += `${parsed.guideResponse}\n\n`;
+            }
+            msg += "📂 **Your Saved Drafts/Tasks:**\n\n";
+            drafts.forEach((d, idx) => {
+              const dateStr = new Date(d.timestamp).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+              msg += `${idx + 1}. **${d.name}** (Saved on: ${dateStr})\n`;
+              d.queue.forEach(item => {
+                msg += `   - *Group:* ${item.dockName} | *Change:* ${item.displayText}\n`;
+              });
+              msg += `\n`;
+            });
+            msg += `💡 *Tip:* Kisi draft ko active queue me lagane ke liye type karein: *load <draft_name>*`;
+            await aero.sendMessage(dockId, msg);
             return;
           }
 
