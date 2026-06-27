@@ -2259,11 +2259,14 @@ JSON Output Format:
   "queue": [ ... ],
   "dockQuery": "group name or ID referenced (for view_logs, view_automations)",
   "userFilter": "username (only for view_logs with user filter, otherwise null)",
-  "guideResponse": "your conversational response in Hinglish (only for action: 'guide')"
+  "guideResponse": "your conversational reply/feedback in Hinglish. You MUST provide this for ALL actions (e.g. explain what you updated in queue, explain why you added/removed/copied a group settings item, confirm finalisation, or guide them)."
 }
 
 CRITICAL RULES:
 - Never extract "aiSlowmodeSec" setting. Use "slowmodeSchedule".
+- GROUP RESOLUTION RULES:
+  * You MUST match the group referenced in the user's input strictly by name or ID. If the user mentions a group name (e.g. "awara"), match it to the group with that name (or matching name) in the docks list.
+  * ONLY use the "Last resolved group from invite code" if the user does NOT mention any group name/ID in their current instruction (e.g., they say "greeting message change kar do" without specifying where, or they say "isme rules badal do"). If they explicitly mention a group name (e.g., "awara"), that explicit mention ALWAYS overrides any resolved group context!
 - AMBIGUITY RESOLUTION: If the user requests changes for a group by name (e.g., "awara"), and there are multiple groups with that same name (or matching that name) in the managed groups list, you MUST NOT proceed with "update_queue". Instead, return action: "guide" and explain in guideResponse that there are multiple groups with that name, list them with their IDs, and ask them to clarify by specifying the Group ID (or last 4 characters of the ID).
 - Return ONLY raw JSON. No markdown code blocks, no explanations.`;
 
@@ -2318,11 +2321,19 @@ CRITICAL RULES:
             saveGroupDb(db);
 
             if (dmSession.queue.length === 0) {
-              await aero.sendMessage(dockId, "📋 **Staged Queue is currently empty.**");
+              let emptyMsg = "📋 **Staged Queue is currently empty.**";
+              if (parsed.guideResponse) {
+                emptyMsg = `${parsed.guideResponse}\n\n${emptyMsg}`;
+              }
+              await aero.sendMessage(dockId, emptyMsg);
               return;
             }
 
-            let queueMsg = `📋 **Implementation List (Queue):**\n\n`;
+            let queueMsg = "";
+            if (parsed.guideResponse) {
+              queueMsg += `${parsed.guideResponse}\n\n`;
+            }
+            queueMsg += `📋 **Implementation List (Queue):**\n\n`;
             dmSession.queue.forEach((item, idx) => {
               queueMsg += `${idx + 1}. **${item.dockName}**: ${item.displayText}\n`;
               if (item.previewText) {
@@ -2335,6 +2346,9 @@ CRITICAL RULES:
           }
 
           if (parsed.action === "finalize") {
+            if (parsed.guideResponse) {
+              await aero.sendMessage(dockId, parsed.guideResponse);
+            }
             await handleFinalizeAction(dockId, senderId, senderName, db, dmSession, adminDocks);
             return;
           }
@@ -2342,17 +2356,29 @@ CRITICAL RULES:
           if (parsed.action === "clear") {
             dmSession.queue = [];
             saveGroupDb(db);
-            await aero.sendMessage(dockId, "❌ **Staged implementation queue cleared.**");
+            let clearMsg = "❌ **Staged implementation queue cleared.**";
+            if (parsed.guideResponse) {
+              clearMsg = `${parsed.guideResponse}\n\n${clearMsg}`;
+            }
+            await aero.sendMessage(dockId, clearMsg);
             return;
           }
 
           if (parsed.action === "view_queue") {
             const queue = dmSession.queue || [];
             if (queue.length === 0) {
-              await aero.sendMessage(dockId, "📋 **Queue is currently empty.**");
+              let emptyMsg = "📋 **Queue is currently empty.**";
+              if (parsed.guideResponse) {
+                emptyMsg = `${parsed.guideResponse}\n\n${emptyMsg}`;
+              }
+              await aero.sendMessage(dockId, emptyMsg);
               return;
             }
-            let queueMsg = `📋 **Current Staged Changes:**\n\n`;
+            let queueMsg = "";
+            if (parsed.guideResponse) {
+              queueMsg += `${parsed.guideResponse}\n\n`;
+            }
+            queueMsg += `📋 **Current Staged Changes:**\n\n`;
             queue.forEach((item, idx) => {
               queueMsg += `${idx + 1}. **${item.dockName}**: ${item.displayText}\n`;
               if (item.previewText) {
