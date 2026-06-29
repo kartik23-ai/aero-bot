@@ -3855,11 +3855,8 @@ CRITICAL RULES:
               console.log(`[gTTS] Transcoding voice note to OGG...`);
               const oggBuffer = transcodeToOgg(audioBuffer);
               
-              console.log(`[gTTS] Uploading voice note to S3...`);
-              const s3Key = await aero.uploadAudioBuffer(oggBuffer, `voice_${Date.now()}.ogg`, "audio/ogg", dockId, isGroup);
-              
-              console.log(`[gTTS] Sending voice note as playable voiceNote with S3 key...`);
-              await aero.sendMessage(dockId, null, null, isGroup, s3Key, null, true);
+              console.log(`[gTTS] Sending voice note as playable voiceNote...`);
+              await aero.sendMessage(dockId, null, null, isGroup, oggBuffer, null, true);
               
               // Track AI request metrics for voice notes
               groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -3985,11 +3982,8 @@ CRITICAL RULES:
                     const mixedBuffer = fs.readFileSync(outputPath);
                     fs.unlinkSync(outputPath);
                     
-                    console.log(`[DissTrack] Uploading custom diss track OGG to S3...`);
-                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.ogg`, "audio/ogg", dockId, isGroup);
-                    
-                    console.log(`[DissTrack] Sending custom diss track OGG with S3 key...`);
-                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, s3Key, null, true);
+                    console.log(`[DissTrack] Sending custom diss track OGG...`);
+                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, mixedBuffer, null, true);
                   } else {
                     throw new Error("Output mixed file not found");
                   }
@@ -5359,11 +5353,8 @@ I will automatically log it as a task and keep you updated! 😊`;
                   console.log(`[Webhook gTTS] Transcoding voice note to OGG...`);
                   const oggBuffer = transcodeToOgg(audioBuffer);
                   
-                  console.log(`[Webhook gTTS] Uploading voice note to S3...`);
-                  const s3Key = await aero.uploadAudioBuffer(oggBuffer, `voice_${Date.now()}.ogg`, "audio/ogg", webhookDockId, true);
-                  
-                  console.log(`[Webhook gTTS] Sending voice note as playable voiceNote with S3 key...`);
-                  await aero.sendMessage(webhookDockId, null, null, true, s3Key, null, true);
+                  console.log(`[Webhook gTTS] Sending voice note as playable voiceNote...`);
+                  await aero.sendMessage(webhookDockId, null, null, true, oggBuffer, null, true);
                   
                   groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                   saveGroupDb(db);
@@ -5488,11 +5479,8 @@ I will automatically log it as a task and keep you updated! 😊`;
                     const mixedBuffer = fs.readFileSync(outputPath);
                     fs.unlinkSync(outputPath);
                     
-                    console.log(`[Webhook DissTrack] Uploading custom diss track OGG to S3...`);
-                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.ogg`, "audio/ogg", webhookDockId, true);
-                    
-                    console.log(`[Webhook DissTrack] Sending custom diss track OGG with S3 key...`);
-                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, s3Key, null, true);
+                    console.log(`[Webhook DissTrack] Sending custom diss track OGG...`);
+                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, mixedBuffer, null, true);
                   } else {
                     throw new Error("Output mixed file not found");
                   }
