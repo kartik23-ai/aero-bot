@@ -4253,7 +4253,24 @@ async function checkSlowmodeSchedules() {
       if (process.env.LOCAL_ONLY === "true") {
         console.log("[LocalMode] LOCAL_ONLY=true — Aero auto-connect SKIPPED. Running in local sandbox mode only.");
       } else {
-        autoConnect().catch(err => {
+        autoConnect().then(async () => {
+          console.log("[Diagnostics] Auto-connected successfully! Running startup download diagnostic...");
+          try {
+            const { downloadYoutubeAudio } = require("./music-downloader");
+            const groupId = "6a098ac946dc268297b10e39"; // Awara Group
+            
+            // Query 1: Matadora
+            const result1 = await downloadYoutubeAudio("matadora");
+            await aero.sendMessage(groupId, `🔍 **[Matadora Test]:**\n- Filename: ${result1.filename}\n- isDirectUrl: ${result1.isDirectUrl}\n- URL: ${result1.uri.substring(0, 120)}...`);
+            
+            // Query 2: Venom by Eminem
+            const result2 = await downloadYoutubeAudio("venom by eminem");
+            await aero.sendMessage(groupId, `🔍 **[Venom Test]:**\n- Filename: ${result2.filename}\n- isDirectUrl: ${result2.isDirectUrl}\n- URL: ${result2.uri.substring(0, 120)}...`);
+            
+          } catch (err) {
+            console.error("[Diagnostics] Failed to run startup checks:", err.message);
+          }
+        }).catch(err => {
           console.error("[AutoConnect] Error on startup:", err.message);
         });
       }
