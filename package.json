@@ -20,6 +20,7 @@
     "@google/genai": "^2.8.0",
     "@gradio/client": "^2.3.0",
     "axios": "^1.17.0",
+    "crypto-js": "^4.2.0",
     "firebase-admin": "^13.10.0",
     "groq-sdk": "^1.2.1",
     "pdfkit": "^0.18.0",

@@ -25,13 +25,19 @@ function checkFfmpeg() {
  */
 function decryptUrl(encryptedUrl) {
   try {
-    const key = Buffer.from("38346591", "utf8");
-    const decipher = crypto.createDecipheriv("des-ecb", key, null);
-    let decrypted = decipher.update(encryptedUrl, "base64", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted.trim();
+    const CryptoJS = require("crypto-js");
+    const key = CryptoJS.enc.Utf8.parse("38346591");
+    const decrypted = CryptoJS.DES.decrypt(
+      { ciphertext: CryptoJS.enc.Base64.parse(encryptedUrl) },
+      key,
+      {
+        mode: CryptoJS.mode.ECB,
+        padding: CryptoJS.pad.Pkcs7
+      }
+    );
+    return decrypted.toString(CryptoJS.enc.Utf8).trim();
   } catch (err) {
-    console.error(`[YtMusicService] Decryption failed: ${err.message}. Ensure --openssl-legacy-provider flag is set.`);
+    console.error(`[YtMusicService] CryptoJS Decryption failed: ${err.message}`);
     return null;
   }
 }

@@ -467,9 +467,80 @@ class ProviderManager {
   }
 
   // =============================================
-  // GOOGLE TTS (TEXT TO SPEECH) - KEYLESS
+  // HIGH-QUALITY MULTI-PROVIDER TEXT TO SPEECH (TTS)
   // =============================================
   async generateTTSAudio(text, lang = "hi") {
+    const axios = require("axios");
+
+    // 1. ElevenLabs Check (Professional custom voice if key configured)
+    if (process.env.ELEVENLABS_API_KEY) {
+      try {
+        console.log("[TTS] Using ElevenLabs API...");
+        const elevenVoiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgqjGQJe7d55"; // Rachel (default)
+        const res = await axios.post(
+          `https://api.elevenlabs.io/v1/text-to-speech/${elevenVoiceId}`,
+          {
+            text: text,
+            model_id: "eleven_monolingual_v1",
+            voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+          },
+          {
+            headers: {
+              "xi-api-key": process.env.ELEVENLABS_API_KEY,
+              "Content-Type": "application/json"
+            },
+            responseType: "arraybuffer"
+          }
+        );
+        return Buffer.from(res.data);
+      } catch (err) {
+        console.error("[TTS] ElevenLabs failed:", err.message);
+      }
+    }
+
+    // 2. OpenAI Check (Professional neural voice if key configured)
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        console.log("[TTS] Using OpenAI TTS API...");
+        const res = await axios.post(
+          "https://api.openai.com/v1/audio/speech",
+          {
+            model: "tts-1",
+            input: text,
+            voice: "onyx" // onyx (deep professional male voice)
+          },
+          {
+            headers: {
+              "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json"
+            },
+            responseType: "arraybuffer"
+          }
+        );
+        return Buffer.from(res.data);
+      } catch (err) {
+        console.error("[TTS] OpenAI TTS failed:", err.message);
+      }
+    }
+
+    // 3. TikTok keyless professional narrator fallback
+    try {
+      console.log("[TTS] Using TikTok keyless professional narrator voice...");
+      const voice = "en_male_narration"; // Extremely realistic human narrator
+      const res = await axios.post(
+        "https://tiktok-tts.weilnet.workers.dev/api/generation",
+        { text, voice },
+        { headers: { "Content-Type": "application/json" } }
+      );
+      if (res.data && res.data.success && res.data.data) {
+        return Buffer.from(res.data.data, "base64");
+      }
+    } catch (err) {
+      console.error("[TTS] TikTok TTS API failed:", err.message);
+    }
+
+    // 4. Fallback to Google TTS (Robotic keyless backup)
+    console.log("[TTS] Falling back to keyless Google Translate TTS...");
     return new Promise((resolve, reject) => {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text.substring(0, 200))}&tl=${lang}&client=tw-ob`;
       const req = https.request(url, {

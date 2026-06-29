@@ -2565,46 +2565,22 @@ CRITICAL RULES:
             return;
           }
 
-          // Fall through to guide AI for conversational requests
-          const systemPrompt = `You are AeroGroupGuard Admin Assistant, a text-only AI designed to guide group admins in Direct Messages.
-You help admins manage their groups by explaining how to change settings and check logs.
-You can parse natural language settings updates (like "set slowmode in awara to 15s" or "set group persona to a funny joker") and stage them in a queue list.
-
-The user manages the following group chats:
-${dockListText}
-
-Available configurations they can request:
-1. Turn welcome greetings ON/OFF.
-2. Update custom greeting message text.
-3. Configure the group's AI Persona (custom system prompt extension).
-4. Manage banned words list (add/remove blacklisted words).
-5. Configure warning limits (max warnings) and threshold actions (mute, kick, ban).
-6. Update group rules text and primary language (english, hindi, hinglish).
-7. Manage custom command triggers (e.g. /rules, /insta).
-8. Enable/disable chat slowmode or scheduled slowmode.
-9. Configure daily task automations (daily news bulletins, recurring reminders).
-10. View active task lists, config change logs, or pending issue queues.
-
-Your instructions:
-- Respond in Hinglish.
-- Be helpful, concise, and friendly.
-- When explaining how to change settings:
-  * Remind them that setting changes are staged in an Implementation Queue first, and they can finalize them by saying "finalize" or cancel them by saying "clear".
-  * They can query active settings/schedules using "active" and pending queues/issues using "pending".`;
-
-          const messages = [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: text }
-          ];
-
-          const completion = await providers.chatCompletion(messages, {
-            model: "default",
-            max_tokens: 300,
-            temperature: 0.7
-          });
-
-          const replyText = completion.choices[0].message.content || "";
-          await aero.sendMessage(dockId, replyText);
+          // Use bestie conversational AI with dynamic commands for DM
+          const { PaperclipEngine } = require("./paperclip-engine");
+          const paperclipMsg = {
+            text: text,
+            senderId: senderId,
+            senderName: senderName,
+            dockId: dockId,
+            imageBuffer: null,
+            checkIsAdmin: async (dId, uId) => checkIsAdmin(dId, uId),
+            aero: aero,
+            getGroupSettings: (dId) => getGroupSettings(db, dId),
+            saveGroupDb: () => saveGroupDb(db),
+            resolveMentionedUserId: async (uname) => resolveMentionedUserId(msg, uname)
+          };
+          const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, "default");
+          await aero.sendMessage(dockId, result.text);
 
           // Track DM AI requests
           const dmSettings = getGroupSettings(db, dockId);
@@ -2629,31 +2605,21 @@ Your instructions:
 
     if (text) {
       try {
-        const systemPrompt = `You are Aero Bot, a friendly and helpful AI assistant for Aero Messenger.
-You are talking to a user in a Direct Message (DM).
-IMPORTANT:
-- Respond in natural, friendly Hinglish.
-- Keep your response text-only (no markdown formatting of images/videos, no audio generation).
-- Answer questions helpfully, chat naturally, and guide the user if they ask about how to use the bot.
-- You do NOT support play, draw, meme, or admin command changes in DM. You are here for normal text chat and guidance.`;
-
-        const recallContext = getRecallContextAllGroups(text);
-        const messages = [
-          { role: "system", content: systemPrompt }
-        ];
-        if (recallContext) {
-          messages.push({ role: "system", content: `Here is some context from the user's groups that might help you answer:\n${recallContext}` });
-        }
-        messages.push({ role: "user", content: text });
-
-        const completion = await providers.chatCompletion(messages, {
-          model: "default",
-          max_tokens: 300,
-          temperature: 0.7
-        });
-
-        const replyText = completion.choices[0].message.content || "";
-        await aero.sendMessage(dockId, replyText);
+        const { PaperclipEngine } = require("./paperclip-engine");
+        const paperclipMsg = {
+          text: text,
+          senderId: senderId,
+          senderName: senderName,
+          dockId: dockId,
+          imageBuffer: null,
+          checkIsAdmin: async (dId, uId) => checkIsAdmin(dId, uId),
+          aero: aero,
+          getGroupSettings: (dId) => getGroupSettings(db, dId),
+          saveGroupDb: () => saveGroupDb(db),
+          resolveMentionedUserId: async (uname) => resolveMentionedUserId(msg, uname)
+        };
+        const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, "default");
+        await aero.sendMessage(dockId, result.text);
 
         // Track DM AI requests
         const dmSettings = getGroupSettings(db, dockId);
@@ -3778,12 +3744,18 @@ IMPORTANT:
           console.log(`[gTTS] Generating audio for: "${voiceText}"`);
           const audioBuffer = await providers.generateTTSAudio(voiceText, "hi");
           
-          // Convert audio to base64 Data URI
-          const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
-          
-          // Send it directly as an audio attachment with custom filename
-          const filename = `Voice_Note_${Date.now()}.mp3`;
-          await aero.sendMessage(dockId, `🎤 **Voice Response for @${senderName}**`, null, isGroup, base64Audio, null, true);
+          (async () => {
+            try {
+              const filename = `voice_${Date.now()}.mp3`;
+              console.log(`[gTTS] Uploading voice note as document to S3...`);
+              const s3Key = await aero.uploadAudioBuffer(audioBuffer, filename, "audio/mpeg", dockId, isGroup);
+              console.log(`[gTTS] Sending voice note document with S3Key: ${s3Key}`);
+              await aero.sendMessage(dockId, null, null, isGroup, s3Key);
+            } catch (uploadErr) {
+              console.error("[gTTS Upload Error]:", uploadErr.message);
+              await aero.sendMessage(dockId, `❌ Voice upload failed: ${uploadErr.message}`);
+            }
+          })();
           
           // Track AI request metrics for voice notes
           groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -3892,8 +3864,16 @@ IMPORTANT:
           reply = staticReply;
         } else {
           try {
-            const paperclipMsg = { ...msg, text: question };
-            paperclipMsg.recallContext = getRecallContext(dockId, question);
+            const paperclipMsg = {
+              ...msg,
+              text: question,
+              recallContext: getRecallContext(dockId, question),
+              checkIsAdmin: async (dId, uId) => checkIsAdmin(dId, uId),
+              aero: aero,
+              getGroupSettings: (dId) => getGroupSettings(db, dId),
+              saveGroupDb: () => saveGroupDb(db),
+              resolveMentionedUserId: async (uname) => resolveMentionedUserId(msg, uname)
+            };
             const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
             reply = result.text;
             if (result.image) {
@@ -4795,8 +4775,16 @@ I will automatically log it as a task and keep you updated! 😊`;
             reply = staticReply;
           } else {
             try {
-              const paperclipMsg = { ...msg, text: question };
-              paperclipMsg.recallContext = getRecallContext(webhookDockId, question);
+              const paperclipMsg = {
+                ...msg,
+                text: question,
+                recallContext: getRecallContext(webhookDockId, question),
+                checkIsAdmin: async (dId, uId) => checkIsAdmin(dId, uId),
+                aero: aero,
+                getGroupSettings: (dId) => getGroupSettings(db, dId),
+                saveGroupDb: () => saveGroupDb(db),
+                resolveMentionedUserId: async (uname) => resolveMentionedUserId(msg, uname)
+              };
               const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
               reply = result.text;
               if (result.image) {
@@ -5094,9 +5082,11 @@ I will automatically log it as a task and keep you updated! 😊`;
               try {
                 console.log(`[Webhook gTTS] Generating audio for: "${voiceText}"`);
                 const audioBuffer = await providers.generateTTSAudio(voiceText, "hi");
-                const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
-                const filename = `Voice_Note_${Date.now()}.mp3`;
-                await aero.sendMessage(webhookDockId, `🎤 **Voice Response for @${senderName}**`, null, true, base64Audio, null, true);
+                const filename = `voice_${Date.now()}.mp3`;
+                console.log(`[Webhook gTTS] Uploading voice note as document to S3...`);
+                const s3Key = await aero.uploadAudioBuffer(audioBuffer, filename, "audio/mpeg", webhookDockId, true);
+                console.log(`[Webhook gTTS] Sending voice note document with S3Key: ${s3Key}`);
+                await aero.sendMessage(webhookDockId, null, null, true, s3Key);
                 groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                 saveGroupDb(db);
               } catch (err) {

@@ -124,6 +124,55 @@ class AeroAPI {
   }
 
   /**
+   * Upload an audio buffer as a document to S3 using multipart upload
+   */
+  async uploadAudioBuffer(buffer, fileName, mimeType, destinationId, isGroup) {
+    const sizeBytes = buffer.length;
+    const destinationType = isGroup ? "dock" : "conversation";
+
+    const initRes = await axios.post(
+      `${API_BASE}/media/multipart/init`,
+      {
+        fileName,
+        mimeType,
+        sizeBytes,
+        mediaKind: "document",
+        mode: "chat_media",
+        destinationType,
+        destinationId
+      },
+      { headers: this._authHeaders() }
+    );
+
+    const sessionId = initRes.data.sessionId;
+
+    const urlRes = await axios.post(
+      `${API_BASE}/media/multipart/part-url`,
+      { sessionId, partNumber: 1 },
+      { headers: this._authHeaders() }
+    );
+
+    const putRes = await axios.put(urlRes.data.url, buffer, {
+      headers: { "Content-Type": mimeType }
+    });
+    const eTagRaw = putRes.headers["etag"] || putRes.headers["ETag"];
+    const eTag = eTagRaw ? eTagRaw.replace(/"/g, "") : "";
+
+    const completeRes = await axios.post(
+      `${API_BASE}/media/multipart/complete`,
+      {
+        sessionId,
+        parts: [
+          { partNumber: 1, eTag }
+        ]
+      },
+      { headers: this._authHeaders() }
+    );
+
+    return completeRes.data.s3Key;
+  }
+
+  /**
    * Fetch details of a single dock and update cache
    */
   async fetchDock(dockId) {

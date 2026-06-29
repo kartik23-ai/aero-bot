@@ -254,7 +254,7 @@ class PaperclipEngine {
 
     let result;
     switch (agentType) {
-      case "HUMAN_AGENT":      result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, msg.systemPromptExtension, msg.recallContext); break;
+      case "HUMAN_AGENT":      result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, msg.systemPromptExtension, msg.recallContext, msg); break;
       case "CODE_AGENT":       result = await this._runCodeAgent(text, senderName, dockModel); break;
       case "CREATIVE_AGENT":   result = await this._runCreativeAgent(text, senderName, dockModel); break;
       case "SEARCH_AGENT":     result = await this._runSearchAgent(text, senderName, dockModel); break;
@@ -272,7 +272,7 @@ class PaperclipEngine {
       case "JOKE_API_AGENT":   result = await this._runJokeApiAgent(text); break;
       case "NEWS_AGENT":       result = await this._runNewsAgent(text); break;
       case "SPORTS_AGENT":     result = await this._runSportsAgent(text); break;
-      default:                 result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, null, msg.systemPromptExtension, msg.recallContext); break;
+      default:                 result = await this._runHumanAgent(text, memoryKey, senderName, dockModel, null, msg.systemPromptExtension, msg.recallContext, msg); break;
     }
 
     // Safety and formatting output checks
@@ -302,7 +302,7 @@ class PaperclipEngine {
 
   // AGENT: Human Chat — Groq / Cerebras (fastest)
   // =============================================
-  async _runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, systemPromptExtension, recallContext) {
+  async _runHumanAgent(text, memoryKey, senderName, dockModel, imageBuffer, systemPromptExtension, recallContext, msg) {
     const facts = HermesMemory.compileFactsString(memoryKey);
     const count = HermesMemory.getInteractionCount(memoryKey);
     const familiarity = count > 10 ? "close friend" : count > 3 ? "known" : "new";
@@ -379,7 +379,13 @@ ${recallContext && recallContext.trim() ? `\n- **Recent Group Chat History (Reca
 If you learn new facts about your friend, append at the very end of your message: <learn>{"longTerm":{"key":"value"},"shortTerm":{"key":"value"}}</learn>
 - **Long-term memory** keys (like name, age, city/address, interests, relationships, preferences) should go inside the "longTerm" object.
 - **Short-term/Temporary memory** keys (casual context like current activity, mood, what they are eating/doing right now, daily updates, short-term plans) should go inside the "shortTerm" object.
-- Only learn facts explicitly stated by the user. Do not invent.`;
+- Only learn facts explicitly stated by the user. Do not invent.
+- **DYNAMIC COMMAND EXECUTION**: If the user asks you to modify group settings, lock/unlock groups, change slowmode, kick/ban/mute a member, announce a message, or save/delete/recall automations, you MUST perform this by appending a "<command>" tag at the very end of your response:
+  Format: <command action="action_name" targetGroup="group_name" value="value" targetUser="username_or_id" />
+  - action: "slowmode", "lock", "unlock", "rules", "setfaq", "kick", "ban", "mute", "unmute", "announce", "save_automation", "delete_automation", "recall_automation"
+  - targetGroup: group name referenced (use "current" if it's the current group or not specified).
+  - value: parameter value (e.g. slowmode seconds "10", announcement message text, new rules text, or the automation description).
+  - targetUser: target username/name (with @, e.g. "@shyam" or user name like "Vaibhav") for warnings, kicks, bans, or automation association.`;
 
     try {
       let refinedText = text;
@@ -431,6 +437,33 @@ If you learn new facts about your friend, append at the very end of your message
           console.log(`[Hermes] Learned for ${senderName} (Key: ${memoryKey})`);
         } catch (_) {}
         reply = reply.replace(/<learn>[\s\S]*?<\/learn>/, "").trim();
+      }
+
+      // Parse and execute <command> tags
+      const commandMatch = reply.match(/<command([\s\S]*?)\/>/);
+      if (commandMatch) {
+        const tagContent = commandMatch[1];
+        const getAttr = (name) => {
+          const m = tagContent.match(new RegExp(`${name}="([^"]*?)"`));
+          return m ? m[1] : null;
+        };
+        const action = getAttr("action");
+        const targetGroup = getAttr("targetGroup");
+        const value = getAttr("value");
+        const targetUser = getAttr("targetUser");
+
+        console.log(`[DynamicCommand] Parsing action="${action}" targetGroup="${targetGroup}" targetUser="${targetUser}"`);
+        const execResult = await executeDynamicCommand({
+          action,
+          targetGroup,
+          value,
+          targetUser,
+          msg,
+          senderId,
+          senderName
+        });
+
+        reply = reply.replace(/<command([\s\S]*?)\/>/, `\n\n${execResult}`).trim();
       }
 
       HermesMemory.pushHistory(memoryKey, "user", text);
@@ -741,6 +774,184 @@ Output only the content of the document, do not include instructions or system t
     const result = await utils.getSportsScore(sport, text);
     if (result.error) return { text: this._friendlyError(result.error, "Sports API"), image: null, provider: "Sports API" };
     return { text: result.text, image: null, provider: "Sports API" };
+  }
+}
+
+async function executeDynamicCommand({ action, targetGroup, value, targetUser, msg, senderId, senderName }) {
+  if (!msg.checkIsAdmin || !msg.aero || !msg.getGroupSettings || !msg.saveGroupDb) {
+    return "❌ Error: Bot execution context missing helpers.";
+  }
+
+  // 1. Resolve targetGroup dockId
+  let targetDockId = msg.dockId; // Default to current dock
+  let dockName = "current group";
+
+  if (targetGroup && targetGroup !== "current") {
+    const targetGroupLower = targetGroup.toLowerCase().trim();
+    
+    // Search in joined docks
+    const joinedDocks = msg.aero.docks || [];
+    const matched = joinedDocks.find(d => d.name && d.name.toLowerCase().includes(targetGroupLower));
+    if (matched) {
+      targetDockId = matched.id;
+      dockName = matched.name;
+    } else {
+      // Fallback search in group settings database names
+      try {
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const dbPath = path.join(__dirname, "..", "db", "group_database.json");
+        if (fs.existsSync(dbPath)) {
+          const db = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
+          const matchedKey = Object.keys(db.groups || {}).find(k => 
+            db.groups[k].groupName && db.groups[k].groupName.toLowerCase().includes(targetGroupLower)
+          );
+          if (matchedKey) {
+            targetDockId = matchedKey;
+            dockName = db.groups[matchedKey].groupName;
+          } else {
+            return `❌ Mujhe group '${targetGroup}' nahi mila.`;
+          }
+        } else {
+          return `❌ Mujhe group '${targetGroup}' nahi mila.`;
+        }
+      } catch (err) {
+        return `❌ Group resolution failed: ${err.message}`;
+      }
+    }
+  } else {
+    // Current group name lookup
+    const joinedDocks = msg.aero.docks || [];
+    const curDock = joinedDocks.find(d => d.id === targetDockId);
+    if (curDock) {
+      dockName = curDock.name;
+    }
+  }
+
+  // 2. CRITICAL Permission Check
+  // Check if sender is admin in the target group
+  const isCreatorOrOwner = senderId === "6a040cc5ea8cb0a319b0bb71" || senderId === "68d9468821d8e8b9277a586b" || senderId === "owner-1";
+  if (!isCreatorOrOwner) {
+    const isUserAdmin = await msg.checkIsAdmin(targetDockId, senderId);
+    if (!isUserAdmin) {
+      return `❌ Permission denied! Aap group '${dockName}' ke administrator nahi hain.`;
+    }
+  }
+
+  const groupSettings = msg.getGroupSettings(targetDockId);
+
+  // 3. Resolve target user ID if targetUser is provided
+  let targetUserId = null;
+  if (targetUser) {
+    const cleanUsername = targetUser.replace(/^@/, "").trim().toLowerCase();
+    
+    // Resolve via helper (mentions / DB)
+    if (msg.resolveMentionedUserId) {
+      targetUserId = await msg.resolveMentionedUserId(cleanUsername);
+    }
+    
+    // Fallback search in cached group members
+    if (!targetUserId && groupSettings.members) {
+      const matchedMember = Object.values(groupSettings.members).find(m => 
+        m.username && m.username.toLowerCase() === cleanUsername
+      );
+      if (matchedMember) {
+        targetUserId = matchedMember.id;
+      }
+    }
+    
+    if (!targetUserId && (action === "kick" || action === "ban" || action === "mute" || action === "unmute")) {
+      return `❌ User ${targetUser} not found. Please use username with @ (e.g. @shyam) so I can resolve their ID.`;
+    }
+  }
+
+  // 4. Execute Actions
+  try {
+    switch (action) {
+      case "slowmode": {
+        const secs = parseInt(value, 10);
+        if (isNaN(secs) || secs < 0) return "❌ Invalid slowmode duration.";
+        groupSettings.slowmodeSeconds = secs;
+        msg.saveGroupDb();
+        await msg.aero.updateDockSettings(targetDockId, { slowMode: secs });
+        return `⏳ Slowmode set to ${secs} seconds in group **${dockName}**.`;
+      }
+      case "lock": {
+        groupSettings.locked = true;
+        msg.saveGroupDb();
+        return `🔒 Group **${dockName}** has been locked.`;
+      }
+      case "unlock": {
+        groupSettings.locked = false;
+        msg.saveGroupDb();
+        return `🔓 Group **${dockName}** has been unlocked.`;
+      }
+      case "rules": {
+        if (!value) return "❌ Please specify the rules content.";
+        groupSettings.rules = value;
+        msg.saveGroupDb();
+        return `✅ Rules updated in group **${dockName}**: "${value.substring(0, 100)}${value.length > 100 ? "..." : ""}"`;
+      }
+      case "setfaq": {
+        if (!value) return "❌ Please specify the FAQ content.";
+        groupSettings.faq = value;
+        msg.saveGroupDb();
+        return `✅ FAQ updated in group **${dockName}**: "${value.substring(0, 100)}${value.length > 100 ? "..." : ""}"`;
+      }
+      case "kick": {
+        await msg.aero.kickMember(targetDockId, targetUserId);
+        return `✅ User ${targetUser} has been kicked from group **${dockName}**.`;
+      }
+      case "ban": {
+        await msg.aero.banMember(targetDockId, targetUserId);
+        return `✅ User ${targetUser} has been banned from group **${dockName}**.`;
+      }
+      case "mute": {
+        await msg.aero.muteMember(targetDockId, targetUserId);
+        return `✅ User ${targetUser} has been muted in group **${dockName}**.`;
+      }
+      case "unmute": {
+        await msg.aero.unmuteMember(targetDockId, targetUserId);
+        return `✅ User ${targetUser} has been unmuted in group **${dockName}**.`;
+      }
+      case "announce": {
+        if (!value) return "❌ Please specify announcement text.";
+        const announceMsg = `📢 **ANNOUNCEMENT**\n👤 **From**: @${senderName}\n\n${value}`;
+        await msg.aero.sendMessage(targetDockId, announceMsg);
+        return `✅ Announcement broadcasted to group **${dockName}**.`;
+      }
+      case "save_automation": {
+        if (!value) return "❌ Please specify automation details.";
+        if (!groupSettings.automations) groupSettings.automations = {};
+        const key = (targetUser || "default").toLowerCase();
+        groupSettings.automations[key] = value;
+        msg.saveGroupDb();
+        return `✅ Saved automation for **${targetUser}** in group **${dockName}**: "${value}"`;
+      }
+      case "delete_automation": {
+        if (!groupSettings.automations) return "❌ No automations found to delete.";
+        const key = (targetUser || "default").toLowerCase();
+        if (groupSettings.automations[key]) {
+          delete groupSettings.automations[key];
+          msg.saveGroupDb();
+          return `✅ Deleted automation for **${targetUser}** in group **${dockName}**.`;
+        }
+        return `❌ No active automation found for **${targetUser}** in group **${dockName}**.`;
+      }
+      case "recall_automation": {
+        if (!groupSettings.automations) return "🤖 No automations found.";
+        const key = (targetUser || "default").toLowerCase();
+        const autVal = groupSettings.automations[key];
+        if (autVal) {
+          return `🤖 Automation task for **${targetUser}** in group **${dockName}**: "${autVal}"`;
+        }
+        return `🤖 No automation record found for **${targetUser}** in group **${dockName}**.`;
+      }
+      default:
+        return `❌ Unknown dynamic action: '${action}'.`;
+    }
+  } catch (err) {
+    return `❌ Action execution failed: ${err.message}`;
   }
 }
 
