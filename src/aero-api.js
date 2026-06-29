@@ -314,7 +314,14 @@ class AeroAPI {
           }
           if (item.document) {
             if (item.asVoiceNote) {
-              payload.audio = item.document;
+              payload.messageType = "voice";
+              payload.voiceNote = {
+                url: item.document,
+                duration: 5000,
+                waveform: "",
+                fileSize: 0,
+                mimeType: "audio/mpeg"
+              };
             } else {
               payload.document = item.document;
             }

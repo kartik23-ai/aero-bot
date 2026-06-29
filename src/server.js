@@ -3826,7 +3826,7 @@ CRITICAL RULES:
               const s3Key = await aero.uploadAudioBuffer(audioBuffer, `voice_${Date.now()}.mp3`, "audio/mpeg", dockId, isGroup);
               
               console.log(`[gTTS] Sending voice note as document.mp3 with S3 key...`);
-              await aero.sendMessage(dockId, null, null, isGroup, s3Key);
+              await aero.sendMessage(dockId, null, null, isGroup, s3Key, null, true);
               
               // Track AI request metrics for voice notes
               groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -3956,7 +3956,7 @@ CRITICAL RULES:
                     const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.mp3`, "audio/mpeg", dockId, isGroup);
                     
                     console.log(`[DissTrack] Sending custom diss track MP3 with S3 key...`);
-                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, s3Key);
+                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, s3Key, null, true);
                   } else {
                     throw new Error("Output mixed file not found");
                   }
@@ -5327,7 +5327,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                   const s3Key = await aero.uploadAudioBuffer(audioBuffer, `voice_${Date.now()}.mp3`, "audio/mpeg", webhookDockId, true);
                   
                   console.log(`[Webhook gTTS] Sending voice note as document.mp3 with S3 key...`);
-                  await aero.sendMessage(webhookDockId, null, null, true, s3Key);
+                  await aero.sendMessage(webhookDockId, null, null, true, s3Key, null, true);
                   
                   groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                   saveGroupDb(db);
@@ -5456,7 +5456,7 @@ I will automatically log it as a task and keep you updated! 😊`;
                     const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.mp3`, "audio/mpeg", webhookDockId, true);
                     
                     console.log(`[Webhook DissTrack] Sending custom diss track MP3 with S3 key...`);
-                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, s3Key);
+                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, s3Key, null, true);
                   } else {
                     throw new Error("Output mixed file not found");
                   }
