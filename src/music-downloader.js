@@ -94,7 +94,7 @@ class YtMusicService {
         }
 
         // 3. Cover Artist blacklist
-        const isCoverArtist = /\b(cover|tribute|lofi|slowed|reverb|reply|recreated|swapnil|choudhary|sonu|nainsy|ajima|tuneit|dj)\b/i.test(artistLower);
+        const isCoverArtist = /\b(cover|tribute|lofi|slowed|reverb|reply|recreated|swapnil|choudhary|sonu|nainsy|ajima|tuneit)\b/i.test(artistLower);
         const userWantsCoverArtist = /\b(swapnil|choudhary|sonu|nainsy|ajima|tuneit)\b/i.test(queryLower);
         if (isCoverArtist && !userWantsCoverArtist && !userWantsLofi) {
           console.log(`[YtMusicService] Skipping cover artist JioSaavn result: "${title}" by "${artist}"`);
