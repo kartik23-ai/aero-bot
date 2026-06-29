@@ -320,7 +320,7 @@ class AeroAPI {
                 duration: 5000,
                 waveform: "",
                 fileSize: 0,
-                mimeType: "audio/mpeg"
+                mimeType: "audio/ogg"
               };
             } else {
               payload.document = item.document;

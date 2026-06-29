@@ -41,6 +41,36 @@ if (fs.existsSync(envPath)) {
 }
 
 const { URL } = require("node:url");
+const { execSync } = require("child_process");
+
+function transcodeToOgg(mp3Buffer) {
+  const tempId = Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+  const tempMp3 = path.join(os.tmpdir(), `temp_${tempId}.mp3`);
+  const tempOgg = path.join(os.tmpdir(), `temp_${tempId}.ogg`);
+  
+  fs.writeFileSync(tempMp3, mp3Buffer);
+  try {
+    execSync(`ffmpeg -y -i "${tempMp3}" -c:a libopus "${tempOgg}"`, { stdio: "ignore" });
+  } catch (err) {
+    try {
+      execSync(`ffmpeg -y -i "${tempMp3}" "${tempOgg}"`, { stdio: "ignore" });
+    } catch (e) {
+      console.error("[Transcode] FFmpeg transcoding to ogg failed:", e.message);
+      try { fs.unlinkSync(tempMp3); } catch(e2){}
+      return mp3Buffer;
+    }
+  }
+  
+  if (fs.existsSync(tempOgg)) {
+    const oggBuffer = fs.readFileSync(tempOgg);
+    try { fs.unlinkSync(tempMp3); fs.unlinkSync(tempOgg); } catch(e){}
+    return oggBuffer;
+  }
+  
+  try { fs.unlinkSync(tempMp3); } catch(e){}
+  return mp3Buffer;
+}
+
 const { AeroGroupGuard } = require("./aero-group-guard");
 const { AiAssistant } = require("./ai-assistant");
 const { buildAnalytics } = require("./analytics");
@@ -3822,10 +3852,13 @@ CRITICAL RULES:
               console.log(`[gTTS] Generating voice note (Model: ${voiceModel || "default"}) for: "${aiResponseText}"`);
               const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi", voiceModel);
               
-              console.log(`[gTTS] Uploading voice note to S3...`);
-              const s3Key = await aero.uploadAudioBuffer(audioBuffer, `voice_${Date.now()}.mp3`, "audio/mpeg", dockId, isGroup);
+              console.log(`[gTTS] Transcoding voice note to OGG...`);
+              const oggBuffer = transcodeToOgg(audioBuffer);
               
-              console.log(`[gTTS] Sending voice note as document.mp3 with S3 key...`);
+              console.log(`[gTTS] Uploading voice note to S3...`);
+              const s3Key = await aero.uploadAudioBuffer(oggBuffer, `voice_${Date.now()}.ogg`, "audio/ogg", dockId, isGroup);
+              
+              console.log(`[gTTS] Sending voice note as playable voiceNote with S3 key...`);
               await aero.sendMessage(dockId, null, null, isGroup, s3Key, null, true);
               
               // Track AI request metrics for voice notes
@@ -3916,7 +3949,7 @@ CRITICAL RULES:
               const tempDir = os.tmpdir();
               
               const vocalPath = path.join(tempDir, `vocal_${tempId}.mp3`);
-              const outputPath = path.join(tempDir, `diss_${tempId}.mp3`);
+              const outputPath = path.join(tempDir, `diss_${tempId}.ogg`);
               
               fs.writeFileSync(vocalPath, vocalBuffer);
               
@@ -3952,10 +3985,10 @@ CRITICAL RULES:
                     const mixedBuffer = fs.readFileSync(outputPath);
                     fs.unlinkSync(outputPath);
                     
-                    console.log(`[DissTrack] Uploading custom diss track MP3 to S3...`);
-                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.mp3`, "audio/mpeg", dockId, isGroup);
+                    console.log(`[DissTrack] Uploading custom diss track OGG to S3...`);
+                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.ogg`, "audio/ogg", dockId, isGroup);
                     
-                    console.log(`[DissTrack] Sending custom diss track MP3 with S3 key...`);
+                    console.log(`[DissTrack] Sending custom diss track OGG with S3 key...`);
                     await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, s3Key, null, true);
                   } else {
                     throw new Error("Output mixed file not found");
@@ -5323,10 +5356,13 @@ I will automatically log it as a task and keep you updated! 😊`;
                   console.log(`[Webhook gTTS] Generating voice note (Model: ${voiceModel || "default"}) for: "${aiResponseText}"`);
                   const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi", voiceModel);
                   
-                  console.log(`[Webhook gTTS] Uploading voice note to S3...`);
-                  const s3Key = await aero.uploadAudioBuffer(audioBuffer, `voice_${Date.now()}.mp3`, "audio/mpeg", webhookDockId, true);
+                  console.log(`[Webhook gTTS] Transcoding voice note to OGG...`);
+                  const oggBuffer = transcodeToOgg(audioBuffer);
                   
-                  console.log(`[Webhook gTTS] Sending voice note as document.mp3 with S3 key...`);
+                  console.log(`[Webhook gTTS] Uploading voice note to S3...`);
+                  const s3Key = await aero.uploadAudioBuffer(oggBuffer, `voice_${Date.now()}.ogg`, "audio/ogg", webhookDockId, true);
+                  
+                  console.log(`[Webhook gTTS] Sending voice note as playable voiceNote with S3 key...`);
                   await aero.sendMessage(webhookDockId, null, null, true, s3Key, null, true);
                   
                   groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -5416,7 +5452,7 @@ I will automatically log it as a task and keep you updated! 😊`;
               const tempDir = os.tmpdir();
               
               const vocalPath = path.join(tempDir, `vocal_${tempId}.mp3`);
-              const outputPath = path.join(tempDir, `diss_${tempId}.mp3`);
+              const outputPath = path.join(tempDir, `diss_${tempId}.ogg`);
               
               fs.writeFileSync(vocalPath, vocalBuffer);
               
@@ -5452,10 +5488,10 @@ I will automatically log it as a task and keep you updated! 😊`;
                     const mixedBuffer = fs.readFileSync(outputPath);
                     fs.unlinkSync(outputPath);
                     
-                    console.log(`[Webhook DissTrack] Uploading custom diss track MP3 to S3...`);
-                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.mp3`, "audio/mpeg", webhookDockId, true);
+                    console.log(`[Webhook DissTrack] Uploading custom diss track OGG to S3...`);
+                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.ogg`, "audio/ogg", webhookDockId, true);
                     
-                    console.log(`[Webhook DissTrack] Sending custom diss track MP3 with S3 key...`);
+                    console.log(`[Webhook DissTrack] Sending custom diss track OGG with S3 key...`);
                     await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, s3Key, null, true);
                   } else {
                     throw new Error("Output mixed file not found");
