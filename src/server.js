@@ -3541,8 +3541,19 @@ CRITICAL RULES:
             await aero.sendMessage(dockId, `🎵 *Searching:* "${songName}"...`);
             const { downloadYoutubeAudio } = require("./music-downloader");
             const audioData = await downloadYoutubeAudio(songName);
-            console.log(`[PlayCommand] Sending audio: ${audioData.filename}`);
-            await aero.sendMessage(dockId, `🎵 **Song:** ${audioData.filename}`, null, null, audioData.uri);
+            if (audioData && audioData.uri) {
+              if (audioData.uri.startsWith("data:")) {
+                const base64Str = audioData.uri.split(",")[1];
+                const buffer = Buffer.from(base64Str, "base64");
+                console.log(`[PlayCommand] Uploading song to S3...`);
+                const s3Key = await aero.uploadAudioBuffer(buffer, audioData.filename, "audio/mpeg", dockId, isGroup);
+                console.log(`[PlayCommand] Sending song S3Key: ${s3Key}`);
+                await aero.sendMessage(dockId, `🎵 **Song:** ${audioData.filename}`, null, isGroup, s3Key);
+              } else {
+                console.log(`[PlayCommand] Sending direct CDN URL: ${audioData.uri}`);
+                await aero.sendMessage(dockId, `🎵 **Song:** ${audioData.filename}`, null, isGroup, audioData.uri);
+              }
+            }
           } catch (err) {
             console.error("[PlayCommand] Error processing music:", err.message);
             await aero.sendMessage(dockId, `❌ Song nahi mila: ${err.message}`);
@@ -5058,8 +5069,19 @@ I will automatically log it as a task and keep you updated! 😊`;
                 await aero.sendMessage(webhookDockId, `🎵 *Searching:* "${songName}"...`);
                 const { downloadYoutubeAudio } = require("./music-downloader");
                 const audioData = await downloadYoutubeAudio(songName);
-                console.log(`[WebhookPlayCommand] Sending audio: ${audioData.filename}`);
-                await aero.sendMessage(webhookDockId, `🎵 **Song:** ${audioData.filename}`, null, null, audioData.uri);
+                if (audioData && audioData.uri) {
+                  if (audioData.uri.startsWith("data:")) {
+                    const base64Str = audioData.uri.split(",")[1];
+                    const buffer = Buffer.from(base64Str, "base64");
+                    console.log(`[WebhookPlayCommand] Uploading song to S3...`);
+                    const s3Key = await aero.uploadAudioBuffer(buffer, audioData.filename, "audio/mpeg", webhookDockId, true);
+                    console.log(`[WebhookPlayCommand] Sending song S3Key: ${s3Key}`);
+                    await aero.sendMessage(webhookDockId, `🎵 **Song:** ${audioData.filename}`, null, true, s3Key);
+                  } else {
+                    console.log(`[WebhookPlayCommand] Sending direct CDN URL: ${audioData.uri}`);
+                    await aero.sendMessage(webhookDockId, `🎵 **Song:** ${audioData.filename}`, null, true, audioData.uri);
+                  }
+                }
               } catch (err) {
                 console.error("[WebhookPlayCommand] Error processing music:", err.message);
                 await aero.sendMessage(webhookDockId, `❌ Song nahi mila: ${err.message}`);

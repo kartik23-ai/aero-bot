@@ -136,7 +136,7 @@ class AeroAPI {
         fileName,
         mimeType,
         sizeBytes,
-        mediaKind: "document",
+        mediaKind: "audio",
         mode: "chat_media",
         destinationType,
         destinationId
