@@ -782,6 +782,49 @@ async function generateMemeBase64(template, topText, bottomText) {
   }
 }
 
+const MEME_AUDIO_MAP = {
+  "gigachad": "https://www.myinstants.com/media/sounds/gigachad-theme.mp3",
+  "sad-kekw": "https://www.myinstants.com/media/sounds/kekw.mp3",
+  "kermit": "https://www.myinstants.com/media/sounds/kermit.mp3",
+  "pika": "https://www.myinstants.com/media/sounds/pika.mp3",
+  "drake": "https://www.myinstants.com/media/sounds/drake-hotline-bling.mp3",
+  "disastergirl": "https://www.myinstants.com/media/sounds/dramatic.mp3",
+  "spongebob": "https://www.myinstants.com/media/sounds/spongebob.mp3",
+  "coffin-dance": "https://www.myinstants.com/media/sounds/astronomia.mp3"
+};
+
+function getMemeAudioForTitle(title) {
+  if (!title) return null;
+  const lower = title.toLowerCase();
+  if (lower.includes("gigachad") || lower.includes("giga chad")) return MEME_AUDIO_MAP["gigachad"];
+  if (lower.includes("kekw") || lower.includes("risitas") || lower.includes("laughing guy")) return MEME_AUDIO_MAP["sad-kekw"];
+  if (lower.includes("kermit")) return MEME_AUDIO_MAP["kermit"];
+  if (lower.includes("pikachu") || lower.includes("pika")) return MEME_AUDIO_MAP["pika"];
+  if (lower.includes("drake")) return MEME_AUDIO_MAP["drake"];
+  if (lower.includes("disaster girl")) return MEME_AUDIO_MAP["disastergirl"];
+  if (lower.includes("spongebob")) return MEME_AUDIO_MAP["spongebob"];
+  if (lower.includes("coffin dance") || lower.includes("astronomia")) return MEME_AUDIO_MAP["coffin-dance"];
+  return null;
+}
+
+async function fetchFileBase64(fileUrl) {
+  try {
+    const res = await axios.get(fileUrl, {
+      responseType: "arraybuffer",
+      timeout: 20000,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      }
+    });
+    const contentType = res.headers["content-type"] || "audio/mpeg";
+    const base64 = Buffer.from(res.data).toString("base64");
+    return `data:${contentType};base64,${base64}`;
+  } catch (err) {
+    console.error("[FileFetch] Failed to fetch file and convert to Base64:", err.message);
+    return null;
+  }
+}
+
 async function fetchImageBase64(imageUrl) {
   try {
     const res = await axios.get(imageUrl, {
@@ -6260,10 +6303,20 @@ async function handleMemeCommand(dockId, senderId, senderName, argsText, groupSe
       const meme = await fetchRedditMeme("memes");
       const base64Uri = await downloadImageAsBase64(meme.url);
       await aero.sendMessage(dockId, `🤖 Direct Meme: *${meme.title}*`, base64Uri);
+      const audioUrl = getMemeAudioForTitle(meme.title);
+      if (audioUrl) {
+        const audioBase64 = await fetchFileBase64(audioUrl);
+        if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+      }
     } catch (err) {
       console.error("[MemeCommand] Failed to fetch generic savage meme for religious redirect:", err.message);
       const base64Uri = await generateMemeBase64("drake", "When someone requests a forbidden meme topic", "But bot sends a savage programming meme instead");
       await aero.sendMessage(dockId, "", base64Uri);
+      const audioUrl = MEME_AUDIO_MAP["drake"];
+      if (audioUrl) {
+        const audioBase64 = await fetchFileBase64(audioUrl);
+        if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+      }
     }
     return;
   }
@@ -6358,7 +6411,8 @@ Do not include markdown code block formatting in your response, return raw JSON 
     }
 
     console.log(`[MemeCommand] Generating Memegen.link meme (Template: ${resJson.template})...`);
-    return await generateMemeBase64(resJson.template, resJson.topText, resJson.bottomText);
+    const base64Uri = await generateMemeBase64(resJson.template, resJson.topText, resJson.bottomText);
+    return { base64Uri, template: resJson.template };
   }
 
   try {
@@ -6371,6 +6425,11 @@ Do not include markdown code block formatting in your response, return raw JSON 
           const memeData = await fetchRedditMeme("");
           const base64Uri = await fetchImageBase64(memeData.url);
           await aero.sendMessage(dockId, "", base64Uri);
+          const audioUrl = getMemeAudioForTitle(memeData.title);
+          if (audioUrl) {
+            const audioBase64 = await fetchFileBase64(audioUrl);
+            if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+          }
           return;
         } catch (err) {
           console.warn("[MemeCommand] Failed to fetch random Reddit meme, trying AI template fallback...", err.message);
@@ -6379,8 +6438,13 @@ Do not include markdown code block formatting in your response, return raw JSON 
 
       // If AI template or fallback
       try {
-        const base64Uri = await generateAiTemplateMeme();
+        const { base64Uri, template } = await generateAiTemplateMeme();
         await aero.sendMessage(dockId, "", base64Uri);
+        const audioUrl = MEME_AUDIO_MAP[template];
+        if (audioUrl) {
+          const audioBase64 = await fetchFileBase64(audioUrl);
+          if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+        }
         return;
       } catch (err) {
         console.error("[MemeCommand] AI template meme failed:", err.message);
@@ -6389,6 +6453,11 @@ Do not include markdown code block formatting in your response, return raw JSON 
       // Ultimate safe Drake fallback
       const base64Uri = await generateMemeBase64("drake", "When memes command fails", "But bot still delivers");
       await aero.sendMessage(dockId, "", base64Uri);
+      const audioUrl = MEME_AUDIO_MAP["drake"];
+      if (audioUrl) {
+        const audioBase64 = await fetchFileBase64(audioUrl);
+        if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+      }
       return;
     }
 
@@ -6396,12 +6465,22 @@ Do not include markdown code block formatting in your response, return raw JSON 
     if (topic.startsWith("@")) {
       console.log(`[MemeCommand] Targeting member: ${topic}. Generating custom AI template meme...`);
       try {
-        const base64Uri = await generateAiTemplateMeme();
+        const { base64Uri, template } = await generateAiTemplateMeme();
         await aero.sendMessage(dockId, "", base64Uri);
+        const audioUrl = MEME_AUDIO_MAP[template];
+        if (audioUrl) {
+          const audioBase64 = await fetchFileBase64(audioUrl);
+          if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+        }
       } catch (err) {
         console.error("[MemeCommand] Failed to generate AI template meme for user mention:", err.message);
         const base64Uri = await generateMemeBase64("drake", `Meme for ${topic}`, "Bot safety fallback");
         await aero.sendMessage(dockId, "", base64Uri);
+        const audioUrl = MEME_AUDIO_MAP["drake"];
+        if (audioUrl) {
+          const audioBase64 = await fetchFileBase64(audioUrl);
+          if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+        }
       }
       return;
     }
@@ -6449,6 +6528,11 @@ Do not include markdown code block formatting in your response, return raw JSON 
         const memeData = await fetchRedditMeme(targetSubreddit);
         const base64Uri = await fetchImageBase64(memeData.url);
         await aero.sendMessage(dockId, "", base64Uri);
+        const audioUrl = getMemeAudioForTitle(memeData.title);
+        if (audioUrl) {
+          const audioBase64 = await fetchFileBase64(audioUrl);
+          if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+        }
         return;
       } catch (err) {
         console.warn(`[MemeCommand] Subreddit r/${targetSubreddit} fetch failed, trying search fallback...`);
@@ -6463,6 +6547,11 @@ Do not include markdown code block formatting in your response, return raw JSON 
         console.log(`[MemeCommand] Downloading Reddit Search result: ${redditMeme.url}`);
         const base64Uri = await fetchImageBase64(redditMeme.url);
         await aero.sendMessage(dockId, "", base64Uri);
+        const audioUrl = getMemeAudioForTitle(redditMeme.title) || getMemeAudioForTitle(topic);
+        if (audioUrl) {
+          const audioBase64 = await fetchFileBase64(audioUrl);
+          if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+        }
         return;
       }
     } catch (err) {
@@ -6483,6 +6572,11 @@ Do not include markdown code block formatting in your response, return raw JSON 
           try {
             const base64Uri = await fetchImageBase64(imgUrl);
             await aero.sendMessage(dockId, "", base64Uri);
+            const audioUrl = getMemeAudioForTitle(topic);
+            if (audioUrl) {
+              const audioBase64 = await fetchFileBase64(audioUrl);
+              if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+            }
             return;
           } catch (dlErr) {
             console.warn(`[MemeCommand] Failed to download image from ${imgUrl}:`, dlErr.message);
@@ -6496,14 +6590,24 @@ Do not include markdown code block formatting in your response, return raw JSON 
     // 3d. Fallback to AI-generated template meme
     console.log("[MemeCommand] Search modes failed, generating custom AI template meme...");
     try {
-      const base64Uri = await generateAiTemplateMeme();
+      const { base64Uri, template } = await generateAiTemplateMeme();
       await aero.sendMessage(dockId, "", base64Uri);
+      const audioUrl = MEME_AUDIO_MAP[template];
+      if (audioUrl) {
+        const audioBase64 = await fetchFileBase64(audioUrl);
+        if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+      }
     } catch (err) {
       console.error("[MemeCommand] AI template meme fallback failed:", err.message);
       // Construct Drake fallback meme
       try {
         const base64Uri = await generateMemeBase64("drake", "Error generating custom meme", "But bot still sends a meme");
         await aero.sendMessage(dockId, "", base64Uri);
+        const audioUrl = MEME_AUDIO_MAP["drake"];
+        if (audioUrl) {
+          const audioBase64 = await fetchFileBase64(audioUrl);
+          if (audioBase64) await aero.sendMessage(dockId, null, null, null, audioBase64);
+        }
       } catch (finalErr) {
         await aero.sendMessage(dockId, `❌ Meme generate karne me error aaya: ${err.message}`);
       }
