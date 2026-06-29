@@ -472,6 +472,51 @@ class ProviderManager {
   async generateTTSAudio(text, lang = "hi", voiceModel = null) {
     const axios = require("axios");
 
+    // Helper for Gradio queue consumer
+    async function runGradioTask(root, fn_index, data, session_hash) {
+      const joinRes = await axios.post(`${root}/queue/join`, {
+        data,
+        fn_index,
+        session_hash
+      });
+      
+      const event_id = joinRes.data.event_id;
+      const streamUrl = `${root}/queue/data?session_hash=${session_hash}`;
+      const response = await fetch(streamUrl);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.substring(6).trim();
+            try {
+              const payload = JSON.parse(dataStr);
+              if (payload.event_id === event_id) {
+                if (payload.msg === "process_completed") {
+                  reader.cancel();
+                  if (payload.output.error) {
+                    throw new Error(payload.output.error);
+                  }
+                  return payload.output;
+                }
+              }
+            } catch (e) {
+              if (e.message.includes("Value:")) throw e;
+            }
+          }
+        }
+      }
+    }
+
     // 0. RVC Celebrity Voice Clone Check (Dynamic download & convert)
     if (voiceModel) {
       const CELEB_MODELS = {
@@ -491,30 +536,27 @@ class ProviderManager {
       if (model) {
         try {
           console.log(`[TTS-RVC] Connecting to RVC space for model: ${model.name}...`);
-          const { Client } = require("@gradio/client");
-          globalThis.WebSocket = require("ws");
+          const rootUrl = "https://jackismyshephard-ultimate-rvc.hf.space/gradio_api";
+          const session_hash = Math.random().toString(36).substring(2, 13);
           
-          const client = await Client.connect("JackismyShephard/ultimate-rvc");
-          
-          // 1. Check if model dropdown choices contain our model name
-          const dropdown = client.config.components.find(c => c.props.label === "Voice model" && c.type === "dropdown");
-          const hasModel = dropdown && dropdown.props.choices && dropdown.props.choices.some(choice => {
-            const val = Array.isArray(choice) ? choice[1] : choice;
-            return String(val).toLowerCase() === model.name.toLowerCase();
-          });
-          
-          if (!hasModel) {
-            console.log(`[TTS-RVC] Model "${model.name}" not found in dropdown. Downloading from: ${model.url}...`);
-            await client.predict("/_wrapped_fn_7", [model.url, model.name]);
-            console.log(`[TTS-RVC] Download complete. Refreshing dropdowns...`);
-            await client.predict("/_init_dropdowns", []);
-          } else {
-            console.log(`[TTS-RVC] Model "${model.name}" is already loaded. Initializing session...`);
-            await client.predict("/_init_dropdowns", []);
+          // Step 1: Download model (fn_index 75)
+          try {
+            console.log(`[TTS-RVC] Downloading/checking model: ${model.name}...`);
+            await runGradioTask(rootUrl, 75, [model.url, model.name], session_hash);
+          } catch (err) {
+            if (!err.message.includes("already exists")) {
+              throw err;
+            }
+            console.log(`[TTS-RVC] Model "${model.name}" already exists on server.`);
           }
           
-          console.log(`[TTS-RVC] Running RVC prediction for text: "${text.substring(0, 50)}..."`);
-          const res = await client.predict("/partial_34", [
+          // Step 2: Refresh dropdown choices (fn_index 195)
+          console.log(`[TTS-RVC] Refreshing dropdown choices...`);
+          await runGradioTask(rootUrl, 195, [], session_hash);
+          
+          // Step 3: Run voice conversion (fn_index 51)
+          console.log(`[TTS-RVC] Executing RVC prediction...`);
+          const convertRes = await runGradioTask(rootUrl, 51, [
             text, // Source (text prompt)
             model.name, // Voice model
             model.edgeVoice, // Edge TTS voice
@@ -541,11 +583,11 @@ class ProviderManager {
             48000, // Output sample rate (Dropdown choice number)
             "mp3", // Output format
             "speech_" + Date.now() // Output name
-          ]);
+          ], session_hash);
           
-          const outputAudio = res.data?.[0];
+          const outputAudio = convertRes.data?.[0];
           if (outputAudio && outputAudio.name) {
-            const downloadUrl = `https://jackismyshephard-ultimate-rvc.hf.space/file=${outputAudio.name}`;
+            const downloadUrl = `https://jackismyshephard-ultimate-rvc.hf.space/gradio_api/file=${outputAudio.name}`;
             console.log(`[TTS-RVC] Downloading converted audio from: ${downloadUrl}`);
             const dlRes = await axios.get(downloadUrl, { responseType: "arraybuffer" });
             console.log(`[TTS-RVC] Voice cloning completed successfully!`);
