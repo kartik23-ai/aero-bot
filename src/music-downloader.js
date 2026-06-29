@@ -65,67 +65,13 @@ class YtMusicService {
         timeout: 10000
       });
       const results = res.data.results || [];
-      const queryLower = query.toLowerCase().replace(/[^a-z0-9\s]/g, "");
-      const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2); // Keywords only
-      const cleanQueryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+      if (results.length === 0) {
+        console.log(`[YtMusicService] No results found on JioSaavn for: "${query}"`);
+        return null;
+      }
 
+      // Just grab the first result that has a valid encrypted media URL
       for (const song of results) {
-        const title = song.title || song.song || "";
-        const titleLower = title.toLowerCase();
-        const artist = song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || "";
-        const artistLower = artist.toLowerCase();
-        const playCount = Number(song.play_count) || 0;
-
-        // 1. Check for instrumentals/bgm/ringtone
-        const isInstrumental = song.more_info?.is_instrumental === "true" || 
-          /\b(instrumental|karaoke|bgm|piano|flute|violin|ringtone|tribute|guitar|synthesizer|orchestra|beat)\b/i.test(titleLower);
-        const userWantsInstrumental = /\b(instrumental|karaoke|bgm|piano|flute|violin|tribute)\b/i.test(queryLower);
-        if (isInstrumental && !userWantsInstrumental) {
-          console.log(`[YtMusicService] Skipping instrumental JioSaavn result: "${title}"`);
-          continue;
-        }
-
-        // 2. Check for lofi/reverb/slowed/cover
-        const isLofi = /\b(lofi|slowed|reverb|cover|remix|mashup|reply|female)\b/i.test(titleLower);
-        const userWantsLofi = /\b(lofi|slowed|reverb|cover|remix|mashup|reply|female)\b/i.test(queryLower);
-        if (isLofi && !userWantsLofi) {
-          console.log(`[YtMusicService] Skipping lofi/reverb/cover JioSaavn result: "${title}"`);
-          continue;
-        }
-
-        // 3. Cover Artist blacklist
-        const isCoverArtist = /\b(cover|tribute|lofi|slowed|reverb|reply|recreated|swapnil|choudhary|sonu|nainsy|ajima|tuneit)\b/i.test(artistLower);
-        const userWantsCoverArtist = /\b(swapnil|choudhary|sonu|nainsy|ajima|tuneit)\b/i.test(queryLower);
-        if (isCoverArtist && !userWantsCoverArtist && !userWantsLofi) {
-          console.log(`[YtMusicService] Skipping cover artist JioSaavn result: "${title}" by "${artist}"`);
-          continue;
-        }
-
-        // Removed extra unrequested words check to prevent false-skips
-
-
-        // 5. Relevance check: verify that all significant query words are present in title or artist
-        let isRelevant = true;
-        for (const word of queryWords) {
-          if (["song", "mp3", "music", "audio", "download", "official", "video"].includes(word)) continue;
-          
-          if (!titleLower.includes(word) && !artistLower.includes(word)) {
-            // Check for spelling differences (kahan vs kahaan)
-            if (word === "kahan" && (titleLower.includes("kahaan") || artistLower.includes("kahaan"))) continue;
-            if (word === "kahaan" && (titleLower.includes("kahan") || artistLower.includes("kahan"))) continue;
-            
-            isRelevant = false;
-            break;
-          }
-        }
-        if (!isRelevant) {
-          console.log(`[YtMusicService] Skipping irrelevant JioSaavn result: "${title}" by "${artist}"`);
-          continue;
-        }
-
-        // Removed play count check to avoid false-skips
-
-
         const encryptedUrl = song.more_info?.encrypted_media_url;
         if (encryptedUrl) {
           const decryptedUrl = decryptUrl(encryptedUrl);
@@ -136,7 +82,9 @@ class YtMusicService {
             } else if (finalUrl.includes("_48.mp4")) {
               finalUrl = finalUrl.replace("_48.mp4", "_160.mp4");
             }
-            console.log(`[YtMusicService] Selected JioSaavn result: "${title}" by "${artist}"`);
+            const title = song.title || song.song || "";
+            const artist = song.more_info?.artistMap?.primary_artists?.map(a => a.name).join(", ") || "";
+            console.log(`[YtMusicService] Selected JioSaavn top result: "${title}" by "${artist}"`);
             return { url: finalUrl, title, artist };
           }
         }
@@ -228,10 +176,12 @@ class YtMusicService {
           const audioUri = await this._downloadAndCompress(saavnData.url, resolvedFilename);
           return { uri: audioUri, filename: resolvedFilename, isDirectUrl: false };
         } catch (err) {
-          console.warn(`[YtMusicService] JioSaavn direct download failed: ${err.message}`);
+          console.warn(`[YtMusicService] JioSaavn direct download failed: ${err.message}. Returning direct URL fallback.`);
+          return { uri: saavnData.url, filename: resolvedFilename, isDirectUrl: true };
         }
       } else {
-        console.warn(`[YtMusicService] ffmpeg not available, skipping JioSaavn download`);
+        console.warn(`[YtMusicService] ffmpeg not available, returning direct JioSaavn CDN link`);
+        return { uri: saavnData.url, filename: resolvedFilename, isDirectUrl: true };
       }
     }
 
