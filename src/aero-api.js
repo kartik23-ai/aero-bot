@@ -313,36 +313,8 @@ class AeroAPI {
             payload.image = item.image;
           }
           if (item.document) {
-            const docStr = String(item.document).toLowerCase();
-            const isAudio = item.asVoiceNote || 
-                            docStr.startsWith("data:audio/") || 
-                            docStr.includes(".mp3") || 
-                            docStr.includes(".mp4") || 
-                            docStr.includes(".ogg") || 
-                            docStr.includes(".mpeg") || 
-                            docStr.includes("/messages/audio_");
-            
-            if (isAudio) {
-              if (item.text && item.text.trim()) {
-                console.log(`[AeroAPI] [Outbound Queue] Audio has caption text. Sending text message first...`);
-                await axios.post(
-                  url,
-                  { text: item.text },
-                  { headers: this._authHeaders() }
-                );
-                this._sentMessageTimestamps.push(Date.now());
-                await new Promise(r => setTimeout(r, 500));
-              }
-              
-              payload.text = "";
-              payload.messageType = "voice";
-              payload.voiceNote = {
-                url: item.document,
-                duration: 300000,
-                waveform: "",
-                fileSize: 1000,
-                mimeType: docStr.includes(".mp4") ? "audio/mp4" : "audio/mp3"
-              };
+            if (item.asVoiceNote) {
+              payload.audio = item.document;
             } else {
               payload.document = item.document;
             }
