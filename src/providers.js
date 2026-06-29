@@ -469,8 +469,95 @@ class ProviderManager {
   // =============================================
   // HIGH-QUALITY MULTI-PROVIDER TEXT TO SPEECH (TTS)
   // =============================================
-  async generateTTSAudio(text, lang = "hi") {
+  async generateTTSAudio(text, lang = "hi", voiceModel = null) {
     const axios = require("axios");
+
+    // 0. RVC Celebrity Voice Clone Check (Dynamic download & convert)
+    if (voiceModel) {
+      const CELEB_MODELS = {
+        modi: {
+          url: "https://huggingface.co/Hazza1/ModiGOW/resolve/main/modi.zip",
+          name: "modi",
+          edgeVoice: "hi-IN-MadhurNeural"
+        },
+        carry: {
+          url: "https://huggingface.co/Vissy/CarryMinati/resolve/main/carryminati.zip",
+          name: "carryminati",
+          edgeVoice: "hi-IN-MadhurNeural"
+        }
+      };
+      
+      const model = CELEB_MODELS[voiceModel.toLowerCase()];
+      if (model) {
+        try {
+          console.log(`[TTS-RVC] Connecting to RVC space for model: ${model.name}...`);
+          const { Client } = require("@gradio/client");
+          globalThis.WebSocket = require("ws");
+          
+          const client = await Client.connect("JackismyShephard/ultimate-rvc");
+          
+          // 1. Check if model dropdown choices contain our model name
+          const dropdown = client.config.components.find(c => c.props.label === "Voice model" && c.type === "dropdown");
+          const hasModel = dropdown && dropdown.props.choices && dropdown.props.choices.some(choice => {
+            const val = Array.isArray(choice) ? choice[1] : choice;
+            return String(val).toLowerCase() === model.name.toLowerCase();
+          });
+          
+          if (!hasModel) {
+            console.log(`[TTS-RVC] Model "${model.name}" not found in dropdown. Downloading from: ${model.url}...`);
+            await client.predict("/_wrapped_fn_7", [model.url, model.name]);
+            console.log(`[TTS-RVC] Download complete. Refreshing dropdowns...`);
+            await client.predict("/_init_dropdowns", []);
+          } else {
+            console.log(`[TTS-RVC] Model "${model.name}" is already loaded. Initializing session...`);
+            await client.predict("/_init_dropdowns", []);
+          }
+          
+          console.log(`[TTS-RVC] Running RVC prediction for text: "${text.substring(0, 50)}..."`);
+          const res = await client.predict("/partial_34", [
+            text, // Source (text prompt)
+            model.name, // Voice model
+            model.edgeVoice, // Edge TTS voice
+            0, // Edge TTS pitch shift
+            0, // TTS speed change
+            0, // TTS volume change
+            0, // Octave shift
+            0, // Semitone shift
+            "rmvpe", // Pitch extraction algorithm
+            0.75, // Index rate
+            0.25, // RMS mix rate
+            0.33, // Protect rate
+            false, // Split input voice
+            false, // Autotune converted voice
+            1, // Autotune intensity
+            false, // Proposed pitch
+            155, // Proposed pitch threshold
+            false, // Clean converted voice
+            0.7, // Cleaning intensity
+            "contentvec", // Embedder model
+            null, // Custom embedder model (Dropdown choices empty)
+            0, // Speaker ID
+            0, // Output gain
+            48000, // Output sample rate (Dropdown choice number)
+            "mp3", // Output format
+            "speech_" + Date.now() // Output name
+          ]);
+          
+          const outputAudio = res.data?.[0];
+          if (outputAudio && outputAudio.name) {
+            const downloadUrl = `https://jackismyshephard-ultimate-rvc.hf.space/file=${outputAudio.name}`;
+            console.log(`[TTS-RVC] Downloading converted audio from: ${downloadUrl}`);
+            const dlRes = await axios.get(downloadUrl, { responseType: "arraybuffer" });
+            console.log(`[TTS-RVC] Voice cloning completed successfully!`);
+            return Buffer.from(dlRes.data);
+          } else {
+            throw new Error("No output audio path in prediction result");
+          }
+        } catch (rvcErr) {
+          console.error("[TTS-RVC] RVC cloning failed, falling back to standard Edge TTS:", rvcErr.message);
+        }
+      }
+    }
 
     // 1. ElevenLabs Check (Professional custom voice if key configured)
     if (process.env.ELEVENLABS_API_KEY) {

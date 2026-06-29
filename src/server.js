@@ -3784,14 +3784,23 @@ CRITICAL RULES:
       if (!isSenderAdmin) {
         reply = "❌ Arey, ye command sirf Admins hi use kar sakte hain!";
       } else {
-        const voiceText = argsText.trim();
+        let voiceText = argsText.trim();
+        let voiceModel = null;
+        if (voiceText.startsWith("--modi")) {
+          voiceModel = "modi";
+          voiceText = voiceText.substring(6).trim();
+        } else if (voiceText.startsWith("--carry")) {
+          voiceModel = "carry";
+          voiceText = voiceText.substring(7).trim();
+        }
+        
         if (!voiceText) {
-          reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho`";
+          reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho` ya `/voice --modi kaise ho`";
         } else {
           reply = null; // Prevent sending duplicate text message
           (async () => {
             try {
-              console.log(`[gTTS] Querying AI for voice note content: "${voiceText}"`);
+              console.log(`[gTTS] Querying AI for voice note content: "${voiceText}" (Model: ${voiceModel || "default"})`);
               const { PaperclipEngine } = require("./paperclip-engine");
               const paperclipMsg = {
                 text: voiceText,
@@ -3810,8 +3819,8 @@ CRITICAL RULES:
               const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
               const aiResponseText = result.text || "";
               
-              console.log(`[gTTS] Generating Polly Aditi voice note for: "${aiResponseText}"`);
-              const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi");
+              console.log(`[gTTS] Generating voice note (Model: ${voiceModel || "default"}) for: "${aiResponseText}"`);
+              const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi", voiceModel);
               const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
               
               console.log(`[gTTS] Sending voice note as document.mp3...`);
@@ -5139,14 +5148,23 @@ I will automatically log it as a task and keep you updated! 😊`;
           if (!isSenderAdmin) {
             reply = "❌ Arey, ye command sirf Admins hi use kar sakte hain!";
           } else {
-            const voiceText = argsText.trim();
+            let voiceText = argsText.trim();
+            let voiceModel = null;
+            if (voiceText.startsWith("--modi")) {
+              voiceModel = "modi";
+              voiceText = voiceText.substring(6).trim();
+            } else if (voiceText.startsWith("--carry")) {
+              voiceModel = "carry";
+              voiceText = voiceText.substring(7).trim();
+            }
+            
             if (!voiceText) {
-              reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho`";
+              reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho` ya `/voice --modi kaise ho`";
             } else {
               reply = null;
               (async () => {
                 try {
-                  console.log(`[Webhook gTTS] Querying AI for voice note content: "${voiceText}"`);
+                  console.log(`[Webhook gTTS] Querying AI for voice note content: "${voiceText}" (Model: ${voiceModel || "default"})`);
                   const { PaperclipEngine } = require("./paperclip-engine");
                   const paperclipMsg = {
                     text: voiceText,
@@ -5165,8 +5183,8 @@ I will automatically log it as a task and keep you updated! 😊`;
                   const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
                   const aiResponseText = result.text || "";
                   
-                  console.log(`[Webhook gTTS] Generating Polly Aditi voice note for: "${aiResponseText}"`);
-                  const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi");
+                  console.log(`[Webhook gTTS] Generating voice note (Model: ${voiceModel || "default"}) for: "${aiResponseText}"`);
+                  const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi", voiceModel);
                   const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
                   
                   console.log(`[Webhook gTTS] Sending voice note as document.mp3...`);
