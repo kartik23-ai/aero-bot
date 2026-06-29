@@ -523,17 +523,22 @@ class ProviderManager {
       }
     }
 
-    // 3. StreamElements Polly Aditi Hindi/Hinglish fallback (Genuine, high-quality, free)
+    // 3. Microsoft Edge Neural keyless TTS (Genuine, extremely realistic human voice for Hinglish/Hindi/English)
     try {
-      console.log("[TTS] Using StreamElements Polly Aditi voice...");
-      const voice = "Aditi";
-      const url = `https://api.streamelements.com/c3/v5/speech?voice=${voice}&text=${encodeURIComponent(text)}`;
-      const res = await axios.get(url, { responseType: "arraybuffer", timeout: 15000 });
-      if (res.status === 200 && res.data && res.data.length > 0) {
-        return Buffer.from(res.data);
+      console.log("[TTS] Using Microsoft Edge Neural TTS voice (hi-IN-MadhurNeural)...");
+      const { Communicate } = require("edge-tts-universal");
+      const comm = new Communicate(text, { voice: "hi-IN-MadhurNeural" });
+      const chunks = [];
+      for await (const chunk of comm.stream()) {
+        if (chunk.type === "audio") {
+          chunks.push(chunk.data);
+        }
+      }
+      if (chunks.length > 0) {
+        return Buffer.concat(chunks);
       }
     } catch (err) {
-      console.error("[TTS] StreamElements Aditi TTS failed:", err.message);
+      console.error("[TTS] Microsoft Edge Neural TTS failed:", err.message);
     }
 
     // 4. TikTok keyless professional narrator fallback (English backup)
