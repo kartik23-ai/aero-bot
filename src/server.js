@@ -4253,40 +4253,7 @@ async function checkSlowmodeSchedules() {
       if (process.env.LOCAL_ONLY === "true") {
         console.log("[LocalMode] LOCAL_ONLY=true — Aero auto-connect SKIPPED. Running in local sandbox mode only.");
       } else {
-        autoConnect().then(async () => {
-          console.log("[Diagnostics] Auto-connected successfully! Running startup download diagnostic...");
-          try {
-            const { downloadYoutubeAudio } = require("./music-downloader");
-            const axios = require("axios");
-            const groupId = "6a098ac946dc268297b10e39"; // Awara Group
-            
-            // Test 1: Direct search without headers
-            const searchUrl = `https://www.jiosaavn.com/api.php?__call=search.getResults&q=matadora&_format=json&_marker=0&ctx=web6dot0&api_version=4`;
-            const res1 = await axios.get(searchUrl, {
-              headers: { "User-Agent": "Mozilla/5.0" }
-            });
-            const firstResult1 = res1.data.results?.[0];
-            const title1 = firstResult1?.title || "None";
-            const artist1 = firstResult1?.more_info?.artistMap?.primary_artists?.[0]?.name || "None";
-            
-            // Test 2: Search with Indian IP headers
-            const res2 = await axios.get(searchUrl, {
-              headers: {
-                "User-Agent": "Mozilla/5.0",
-                "X-Forwarded-For": "49.36.0.1",
-                "X-Real-IP": "49.36.0.1"
-              }
-            });
-            const firstResult2 = res2.data.results?.[0];
-            const title2 = firstResult2?.title || "None";
-            const artist2 = firstResult2?.more_info?.artistMap?.primary_artists?.[0]?.name || "None";
-            
-            await aero.sendMessage(groupId, `🔬 **[Geo-Location Diagnostic]:**\n\n1. **Standard Search:**\n- Title: ${title1}\n- Artist: ${artist1}\n\n2. **Indian IP Spoofed Search:**\n- Title: ${title2}\n- Artist: ${artist2}`);
-            
-          } catch (err) {
-            console.error("[Diagnostics] Failed to run startup checks:", err.message);
-          }
-        }).catch(err => {
+        autoConnect().catch(err => {
           console.error("[AutoConnect] Error on startup:", err.message);
         });
       }
