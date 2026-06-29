@@ -323,6 +323,18 @@ class AeroAPI {
                             docStr.includes("/messages/audio_");
             
             if (isAudio) {
+              if (item.text && item.text.trim()) {
+                console.log(`[AeroAPI] [Outbound Queue] Audio has caption text. Sending text message first...`);
+                await axios.post(
+                  url,
+                  { text: item.text },
+                  { headers: this._authHeaders() }
+                );
+                this._sentMessageTimestamps.push(Date.now());
+                await new Promise(r => setTimeout(r, 500));
+              }
+              
+              payload.text = "";
               payload.messageType = "voice";
               payload.voiceNote = {
                 url: item.document,
