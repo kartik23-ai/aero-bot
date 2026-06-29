@@ -313,7 +313,16 @@ class AeroAPI {
             payload.image = item.image;
           }
           if (item.document) {
-            if (item.asVoiceNote) {
+            const docStr = String(item.document).toLowerCase();
+            const isAudio = item.asVoiceNote || 
+                            docStr.startsWith("data:audio/") || 
+                            docStr.includes(".mp3") || 
+                            docStr.includes(".mp4") || 
+                            docStr.includes(".ogg") || 
+                            docStr.includes(".mpeg") || 
+                            docStr.includes("/messages/audio_");
+            
+            if (isAudio) {
               payload.audio = item.document;
             } else {
               payload.document = item.document;
