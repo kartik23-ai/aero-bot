@@ -323,7 +323,14 @@ class AeroAPI {
                             docStr.includes("/messages/audio_");
             
             if (isAudio) {
-              payload.audio = item.document;
+              payload.messageType = "voice";
+              payload.voiceNote = {
+                url: item.document,
+                duration: 300000,
+                waveform: "",
+                fileSize: 1000,
+                mimeType: docStr.includes(".mp4") ? "audio/mp4" : "audio/mp3"
+              };
             } else {
               payload.document = item.document;
             }
