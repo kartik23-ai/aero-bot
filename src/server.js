@@ -3821,10 +3821,12 @@ CRITICAL RULES:
               
               console.log(`[gTTS] Generating voice note (Model: ${voiceModel || "default"}) for: "${aiResponseText}"`);
               const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi", voiceModel);
-              const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
               
-              console.log(`[gTTS] Sending voice note as document.mp3...`);
-              await aero.sendMessage(dockId, null, null, isGroup, base64Audio);
+              console.log(`[gTTS] Uploading voice note to S3...`);
+              const s3Key = await aero.uploadAudioBuffer(audioBuffer, `voice_${Date.now()}.mp3`, "audio/mpeg", dockId, isGroup);
+              
+              console.log(`[gTTS] Sending voice note as document.mp3 with S3 key...`);
+              await aero.sendMessage(dockId, null, null, isGroup, s3Key);
               
               // Track AI request metrics for voice notes
               groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
@@ -3950,10 +3952,11 @@ CRITICAL RULES:
                     const mixedBuffer = fs.readFileSync(outputPath);
                     fs.unlinkSync(outputPath);
                     
-                    const base64Audio = `data:audio/mp3;base64,${mixedBuffer.toString("base64")}`;
+                    console.log(`[DissTrack] Uploading custom diss track MP3 to S3...`);
+                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.mp3`, "audio/mpeg", dockId, isGroup);
                     
-                    console.log(`[DissTrack] Sending custom diss track MP3...`);
-                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, base64Audio);
+                    console.log(`[DissTrack] Sending custom diss track MP3 with S3 key...`);
+                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, s3Key);
                   } else {
                     throw new Error("Output mixed file not found");
                   }
@@ -5319,10 +5322,12 @@ I will automatically log it as a task and keep you updated! 😊`;
                   
                   console.log(`[Webhook gTTS] Generating voice note (Model: ${voiceModel || "default"}) for: "${aiResponseText}"`);
                   const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi", voiceModel);
-                  const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
                   
-                  console.log(`[Webhook gTTS] Sending voice note as document.mp3...`);
-                  await aero.sendMessage(webhookDockId, null, null, true, base64Audio);
+                  console.log(`[Webhook gTTS] Uploading voice note to S3...`);
+                  const s3Key = await aero.uploadAudioBuffer(audioBuffer, `voice_${Date.now()}.mp3`, "audio/mpeg", webhookDockId, true);
+                  
+                  console.log(`[Webhook gTTS] Sending voice note as document.mp3 with S3 key...`);
+                  await aero.sendMessage(webhookDockId, null, null, true, s3Key);
                   
                   groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                   saveGroupDb(db);
@@ -5447,10 +5452,11 @@ I will automatically log it as a task and keep you updated! 😊`;
                     const mixedBuffer = fs.readFileSync(outputPath);
                     fs.unlinkSync(outputPath);
                     
-                    const base64Audio = `data:audio/mp3;base64,${mixedBuffer.toString("base64")}`;
+                    console.log(`[Webhook DissTrack] Uploading custom diss track MP3 to S3...`);
+                    const s3Key = await aero.uploadAudioBuffer(mixedBuffer, `diss_${tempId}.mp3`, "audio/mpeg", webhookDockId, true);
                     
-                    console.log(`[Webhook DissTrack] Sending custom diss track MP3...`);
-                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, base64Audio);
+                    console.log(`[Webhook DissTrack] Sending custom diss track MP3 with S3 key...`);
+                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, s3Key);
                   } else {
                     throw new Error("Output mixed file not found");
                   }

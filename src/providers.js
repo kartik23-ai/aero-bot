@@ -482,38 +482,49 @@ class ProviderManager {
       
       const event_id = joinRes.data.event_id;
       const streamUrl = `${root}/queue/data?session_hash=${session_hash}`;
-      const response = await fetch(streamUrl);
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
       
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.warn(`[TTS-RVC] Task timed out after 45s. Aborting stream fetch.`);
+        controller.abort();
+      }, 45000);
+      
+      try {
+        const response = await fetch(streamUrl, { signal: controller.signal });
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
         
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-        
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const dataStr = line.substring(6).trim();
-            try {
-              const payload = JSON.parse(dataStr);
-              if (payload.event_id === event_id) {
-                if (payload.msg === "process_completed") {
-                  reader.cancel();
-                  if (payload.output.error) {
-                    throw new Error(payload.output.error);
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop();
+          
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const dataStr = line.substring(6).trim();
+              try {
+                const payload = JSON.parse(dataStr);
+                if (payload.event_id === event_id) {
+                  if (payload.msg === "process_completed") {
+                    reader.cancel();
+                    if (payload.output.error) {
+                      throw new Error(payload.output.error);
+                    }
+                    return payload.output;
                   }
-                  return payload.output;
                 }
+              } catch (e) {
+                if (e.message.includes("Value:")) throw e;
               }
-            } catch (e) {
-              if (e.message.includes("Value:")) throw e;
             }
           }
         }
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 
@@ -586,8 +597,8 @@ class ProviderManager {
           ], session_hash);
           
           const outputAudio = convertRes.data?.[0];
-          if (outputAudio && outputAudio.name) {
-            const downloadUrl = `https://jackismyshephard-ultimate-rvc.hf.space/gradio_api/file=${outputAudio.name}`;
+          if (outputAudio && (outputAudio.url || outputAudio.path || outputAudio.name)) {
+            const downloadUrl = outputAudio.url || `https://jackismyshephard-ultimate-rvc.hf.space/gradio_api/file=${outputAudio.path || outputAudio.name}`;
             console.log(`[TTS-RVC] Downloading converted audio from: ${downloadUrl}`);
             const dlRes = await axios.get(downloadUrl, { responseType: "arraybuffer" });
             console.log(`[TTS-RVC] Voice cloning completed successfully!`);
