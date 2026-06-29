@@ -163,26 +163,13 @@ class YtMusicService {
 
     let resolvedFilename = `${query.trim()}.mp3`;
 
-    // ── STEP 1: JioSaavn CDN → Axios download → ffmpeg compress → base64 ──
+    // ── STEP 1: JioSaavn CDN → Direct URL delivery to bypass server geo-blocks ──
     const saavnData = await this.searchJioSaavnUrl(query);
     if (saavnData) {
       resolvedFilename = `${saavnData.title} - ${saavnData.artist}.mp3`
         .replace(/[^a-zA-Z0-9_\-\s\.]/g, "").trim();
-
-      const hasFfmpeg = await checkFfmpeg();
-
-      if (hasFfmpeg) {
-        try {
-          const audioUri = await this._downloadAndCompress(saavnData.url, resolvedFilename);
-          return { uri: audioUri, filename: resolvedFilename, isDirectUrl: false };
-        } catch (err) {
-          console.warn(`[YtMusicService] JioSaavn direct download failed: ${err.message}. Returning direct URL fallback.`);
-          return { uri: saavnData.url, filename: resolvedFilename, isDirectUrl: true };
-        }
-      } else {
-        console.warn(`[YtMusicService] ffmpeg not available, returning direct JioSaavn CDN link`);
-        return { uri: saavnData.url, filename: resolvedFilename, isDirectUrl: true };
-      }
+      console.log(`[YtMusicService] JioSaavn resolved. Returning direct URL to bypass geo-blocks: ${saavnData.url}`);
+      return { uri: saavnData.url, filename: resolvedFilename, isDirectUrl: true };
     }
 
     // ── STEP 2: yt-dlp YouTube fallback ──
