@@ -523,10 +523,23 @@ class ProviderManager {
       }
     }
 
-    // 3. TikTok keyless professional narrator fallback
+    // 3. StreamElements Polly Aditi Hindi/Hinglish fallback (Genuine, high-quality, free)
+    try {
+      console.log("[TTS] Using StreamElements Polly Aditi voice...");
+      const voice = "Aditi";
+      const url = `https://api.streamelements.com/c3/v5/speech?voice=${voice}&text=${encodeURIComponent(text)}`;
+      const res = await axios.get(url, { responseType: "arraybuffer", timeout: 15000 });
+      if (res.status === 200 && res.data && res.data.length > 0) {
+        return Buffer.from(res.data);
+      }
+    } catch (err) {
+      console.error("[TTS] StreamElements Aditi TTS failed:", err.message);
+    }
+
+    // 4. TikTok keyless professional narrator fallback (English backup)
     try {
       console.log("[TTS] Using TikTok keyless professional narrator voice...");
-      const voice = "en_male_narration"; // Extremely realistic human narrator
+      const voice = "en_male_narration";
       const res = await axios.post(
         "https://tiktok-tts.weilnet.workers.dev/api/generation",
         { text, voice },
@@ -539,7 +552,7 @@ class ProviderManager {
       console.error("[TTS] TikTok TTS API failed:", err.message);
     }
 
-    // 4. Fallback to Google TTS (Robotic keyless backup)
+    // 5. Fallback to Google TTS (Robotic keyless backup)
     console.log("[TTS] Falling back to keyless Google Translate TTS...");
     return new Promise((resolve, reject) => {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text.substring(0, 200))}&tl=${lang}&client=tw-ob`;

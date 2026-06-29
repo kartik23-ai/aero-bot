@@ -3738,35 +3738,50 @@ CRITICAL RULES:
         }
       }
     } else if (cmdName === "voice") {
-      const voiceText = argsText.trim();
-      if (!voiceText) {
-        reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho`";
+      if (!isSenderAdmin) {
+        reply = "❌ Arey, ye command sirf Admins hi use kar sakte hain!";
       } else {
-        try {
-          console.log(`[gTTS] Generating audio for: "${voiceText}"`);
-          const audioBuffer = await providers.generateTTSAudio(voiceText, "hi");
-          
+        const voiceText = argsText.trim();
+        if (!voiceText) {
+          reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho`";
+        } else {
+          reply = null; // Prevent sending duplicate text message
           (async () => {
             try {
-              const filename = `voice_${Date.now()}.mp3`;
-              console.log(`[gTTS] Uploading voice note as document to S3...`);
-              const s3Key = await aero.uploadAudioBuffer(audioBuffer, filename, "audio/mpeg", dockId, isGroup);
-              console.log(`[gTTS] Sending voice note document with S3Key: ${s3Key}`);
-              await aero.sendMessage(dockId, null, null, isGroup, s3Key);
-            } catch (uploadErr) {
-              console.error("[gTTS Upload Error]:", uploadErr.message);
-              await aero.sendMessage(dockId, `❌ Voice upload failed: ${uploadErr.message}`);
+              console.log(`[gTTS] Querying AI for voice note content: "${voiceText}"`);
+              const { PaperclipEngine } = require("./paperclip-engine");
+              const paperclipMsg = {
+                text: voiceText,
+                senderId: senderId,
+                senderName: senderName,
+                dockId: dockId,
+                imageBuffer: null,
+                recallContext: typeof getRecallContext === "function" ? getRecallContext(dockId, voiceText) : "",
+                checkIsAdmin: async (dId, uId) => checkIsAdmin(dId, uId),
+                aero: aero,
+                getGroupSettings: (dId) => getGroupSettings(db, dId),
+                saveGroupDb: () => saveGroupDb(db),
+                resolveMentionedUserId: async (uname) => resolveMentionedUserId(msg, uname)
+              };
+              
+              const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
+              const aiResponseText = result.text || "";
+              
+              console.log(`[gTTS] Generating Polly Aditi voice note for: "${aiResponseText}"`);
+              const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi");
+              const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
+              
+              console.log(`[gTTS] Sending voice note as document.mp3...`);
+              await aero.sendMessage(dockId, null, null, isGroup, base64Audio);
+              
+              // Track AI request metrics for voice notes
+              groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
+              saveGroupDb(db);
+            } catch (err) {
+              console.error("[gTTS Command Error]:", err.message);
+              await aero.sendMessage(dockId, `❌ Voice generation failed: ${err.message}`);
             }
           })();
-          
-          // Track AI request metrics for voice notes
-          groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
-          saveGroupDb(db);
-          
-          reply = null; // Prevent sending duplicate text message
-        } catch (err) {
-          console.error("[gTTS Command Error]:", err.message);
-          reply = "❌ Voice reply generate karne me issue aaya. Dobara try karein.";
         }
       }
     } else if (cmdName === "bot") {
@@ -5078,27 +5093,50 @@ I will automatically log it as a task and keep you updated! 😊`;
             if (res) aero.sendMessage(webhookDockId, res);
           });
         } else if (cmdName === "voice") {
-          const voiceText = argsText.trim();
-          if (!voiceText) {
-            reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho`";
+          if (!isSenderAdmin) {
+            reply = "❌ Arey, ye command sirf Admins hi use kar sakte hain!";
           } else {
-            (async () => {
-              try {
-                console.log(`[Webhook gTTS] Generating audio for: "${voiceText}"`);
-                const audioBuffer = await providers.generateTTSAudio(voiceText, "hi");
-                const filename = `voice_${Date.now()}.mp3`;
-                console.log(`[Webhook gTTS] Uploading voice note as document to S3...`);
-                const s3Key = await aero.uploadAudioBuffer(audioBuffer, filename, "audio/mpeg", webhookDockId, true);
-                console.log(`[Webhook gTTS] Sending voice note document with S3Key: ${s3Key}`);
-                await aero.sendMessage(webhookDockId, null, null, true, s3Key);
-                groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
-                saveGroupDb(db);
-              } catch (err) {
-                console.error("[Webhook gTTS Command Error]:", err.message);
-                await aero.sendMessage(webhookDockId, "❌ Voice reply generate karne me issue aaya. Dobara try karein.");
-              }
-            })();
-            reply = null;
+            const voiceText = argsText.trim();
+            if (!voiceText) {
+              reply = "Arey yaar, bolne ke liye kuch likho to sahi! E.g. `/voice kaise ho`";
+            } else {
+              reply = null;
+              (async () => {
+                try {
+                  console.log(`[Webhook gTTS] Querying AI for voice note content: "${voiceText}"`);
+                  const { PaperclipEngine } = require("./paperclip-engine");
+                  const paperclipMsg = {
+                    text: voiceText,
+                    senderId: senderId,
+                    senderName: senderName,
+                    dockId: webhookDockId,
+                    imageBuffer: null,
+                    recallContext: typeof getRecallContext === "function" ? getRecallContext(webhookDockId, voiceText) : "",
+                    checkIsAdmin: async (dId, uId) => checkIsAdmin(dId, uId),
+                    aero: aero,
+                    getGroupSettings: (dId) => getGroupSettings(db, dId),
+                    saveGroupDb: () => saveGroupDb(db),
+                    resolveMentionedUserId: async (uname) => resolveMentionedUserId(msg, uname)
+                  };
+                  
+                  const result = await PaperclipEngine.process(paperclipMsg, generateImageBase64, groupSettings.aiModel);
+                  const aiResponseText = result.text || "";
+                  
+                  console.log(`[Webhook gTTS] Generating Polly Aditi voice note for: "${aiResponseText}"`);
+                  const audioBuffer = await providers.generateTTSAudio(aiResponseText, "hi");
+                  const base64Audio = `data:audio/mp3;base64,${audioBuffer.toString("base64")}`;
+                  
+                  console.log(`[Webhook gTTS] Sending voice note as document.mp3...`);
+                  await aero.sendMessage(webhookDockId, null, null, true, base64Audio);
+                  
+                  groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
+                  saveGroupDb(db);
+                } catch (err) {
+                  console.error("[Webhook gTTS Command Error]:", err.message);
+                  await aero.sendMessage(webhookDockId, `❌ Voice generation failed: ${err.message}`);
+                }
+              })();
+            }
           }
         } else if (cmdName === "rules") {
           reply = groupSettings.rules || "No rules set.";
