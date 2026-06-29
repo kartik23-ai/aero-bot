@@ -3836,6 +3836,140 @@ CRITICAL RULES:
           })();
         }
       }
+    } else if (cmdName === "disstrack") {
+      if (!isSenderAdmin) {
+        reply = "❌ Arey, ye command sirf Admins hi use kar sakte hain!";
+      } else {
+        let targetText = argsText.trim();
+        let voiceModel = null;
+        if (targetText.includes("--modi")) {
+          voiceModel = "modi";
+          targetText = targetText.replace("--modi", "").trim();
+        } else if (targetText.includes("--carry")) {
+          voiceModel = "carry";
+          targetText = targetText.replace("--carry", "").trim();
+        }
+        
+        let targetUser = targetText.trim();
+        if (!targetUser && msg.replyToMsg) {
+          const repliedMsg = await resolveReplyMessage(dockId, msg.replyToMsg);
+          if (repliedMsg && repliedMsg.senderId) {
+            targetUser = repliedMsg.senderId.username || repliedMsg.senderId.id;
+          }
+        }
+        
+        if (!targetUser) {
+          reply = "Arey yaar, disstrack banane ke liye kisi ko tag to karo! E.g. `/disstrack @username` ya reply to their message with `/disstrack`";
+        } else {
+          reply = null;
+          (async () => {
+            try {
+              let cleanedUsername = targetUser.replace(/^@/, "").trim();
+              
+              // 1. Fetch recent messages to build context
+              console.log(`[DissTrack] Fetching messages context for: ${cleanedUsername}`);
+              const messages = await aero.getMessages(dockId, 100);
+              const targetMsgs = messages.filter(m => 
+                m.senderId?.username?.toLowerCase() === cleanedUsername.toLowerCase() || 
+                m.senderId?._id === cleanedUsername
+              );
+              
+              const firstMsg = targetMsgs[0];
+              const targetFullName = firstMsg ? (firstMsg.senderId?.fullName || firstMsg.senderId?.displayName || cleanedUsername) : cleanedUsername;
+              const targetUsername = firstMsg ? (firstMsg.senderId?.username || cleanedUsername) : cleanedUsername;
+              
+              const recentTexts = targetMsgs.slice(0, 15).map(m => m.text).filter(Boolean).join(" | ");
+              
+              // 2. Query LLM for rap lyrics
+              await aero.sendMessage(dockId, `🎵 Writing a spicy diss track rap for **${targetFullName}**...`);
+              
+              const systemPrompt = `You are a legendary street rap artist who writes spicy, hilarious, light-hearted Hinglish hip-hop diss tracks.`;
+              const userPrompt = `Write a funny, light-hearted Hinglish rap diss track verse (exactly 4 lines, no chorus, no music cues) roasting a user named "${targetFullName}" (@${targetUsername}).
+              
+              Here is the context of what they recently said in the group chat:
+              "${recentTexts || "No recent messages, they are a quiet lurker!"}"
+              
+              Rules:
+              - Exactly 4 rhyming lines.
+              - Mix Hindi and English (Hinglish).
+              - Make it funny and roasting, but keep it friendly.
+              - Return ONLY the 4 lines of lyrics text. Do not output anything else.`;
+              
+              const response = await providers.chatCompletion([
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt }
+              ], { model: "default", max_tokens: 300, temperature: 0.85 });
+              
+              const lyrics = response.choices?.[0]?.message?.content?.trim() || "";
+              console.log(`[DissTrack] Generated Lyrics:\n${lyrics}`);
+              
+              // 3. Generate vocal
+              console.log(`[DissTrack] Generating rap vocal (Voice model: ${voiceModel || "default"})...`);
+              const vocalBuffer = await providers.generateTTSAudio(lyrics, "hi", voiceModel);
+              
+              const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
+              const fs = require("fs");
+              const path = require("path");
+              const os = require("os");
+              const tempDir = os.tmpdir();
+              
+              const vocalPath = path.join(tempDir, `vocal_${tempId}.mp3`);
+              const outputPath = path.join(tempDir, `diss_${tempId}.mp3`);
+              
+              fs.writeFileSync(vocalPath, vocalBuffer);
+              
+              // 4. Download background beat if not exists
+              const beatPath = path.join(process.cwd(), "db", "flow.mp3");
+              const beatDir = path.dirname(beatPath);
+              if (!fs.existsSync(beatDir)) {
+                fs.mkdirSync(beatDir, { recursive: true });
+              }
+              
+              if (!fs.existsSync(beatPath)) {
+                console.log(`[DissTrack] Downloading background beat...`);
+                const axios = require("axios");
+                const dlRes = await axios.get("https://archive.org/download/DWK232/BaaskaT_-_01_-_Flow.mp3", { responseType: "arraybuffer" });
+                fs.writeFileSync(beatPath, dlRes.data);
+              }
+              
+              // 5. Run FFmpeg to mix beat and vocal
+              console.log(`[DissTrack] Mixing via FFmpeg...`);
+              const { exec } = require("child_process");
+              // Speed up vocal by 28% and mix with beat
+              const cmd = `ffmpeg -y -i "${vocalPath}" -i "${beatPath}" -filter_complex "[0:a]atempo=1.28,volume=1.35[vocal];[1:a]volume=0.20[beat];[vocal][beat]amix=inputs=2:duration=first:dropout_transition=0" -ac 2 "${outputPath}"`;
+              
+              exec(cmd, async (error) => {
+                try {
+                  if (fs.existsSync(vocalPath)) fs.unlinkSync(vocalPath);
+                  
+                  if (error) {
+                    throw new Error("FFmpeg mixing failed: " + error.message);
+                  }
+                  
+                  if (fs.existsSync(outputPath)) {
+                    const mixedBuffer = fs.readFileSync(outputPath);
+                    fs.unlinkSync(outputPath);
+                    
+                    const base64Audio = `data:audio/mp3;base64,${mixedBuffer.toString("base64")}`;
+                    
+                    console.log(`[DissTrack] Sending custom diss track MP3...`);
+                    await aero.sendMessage(dockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, isGroup, base64Audio);
+                  } else {
+                    throw new Error("Output mixed file not found");
+                  }
+                } catch (mixErr) {
+                  console.error("[DissTrack Mix Error]:", mixErr.message);
+                  await aero.sendMessage(dockId, `❌ Diss track mixing failed: ${mixErr.message}`);
+                }
+              });
+              
+            } catch (err) {
+              console.error("[DissTrack Command Error]:", err.message);
+              await aero.sendMessage(dockId, `❌ Failed to generate diss track: ${err.message}`);
+            }
+          })();
+        }
+      }
     } else if (cmdName === "bot") {
       const sub = argsText.trim().toLowerCase();
       if (senderId !== "6a040cc5ea8cb0a319b0bb71" && senderId !== "68d9468821d8e8b9277a586b" && senderId !== "owner-1") {
@@ -5192,15 +5326,149 @@ I will automatically log it as a task and keep you updated! 😊`;
                   
                   groupSettings.aiRequestCount = (groupSettings.aiRequestCount || 0) + 1;
                   saveGroupDb(db);
-                } catch (err) {
-                  console.error("[Webhook gTTS Command Error]:", err.message);
-                  await aero.sendMessage(webhookDockId, `❌ Voice generation failed: ${err.message}`);
-                }
-              })();
+            } catch (err) {
+              console.error("[Webhook gTTS Command Error]:", err.message);
+              await aero.sendMessage(webhookDockId, `❌ Voice generation failed: ${err.message}`);
             }
+          })();
+        }
+      }
+    } else if (cmdName === "disstrack") {
+      if (!isSenderAdmin) {
+        reply = "❌ Arey, ye command sirf Admins hi use kar sakte hain!";
+      } else {
+        let targetText = argsText.trim();
+        let voiceModel = null;
+        if (targetText.includes("--modi")) {
+          voiceModel = "modi";
+          targetText = targetText.replace("--modi", "").trim();
+        } else if (targetText.includes("--carry")) {
+          voiceModel = "carry";
+          targetText = targetText.replace("--carry", "").trim();
+        }
+        
+        let targetUser = targetText.trim();
+        if (!targetUser && msg.replyToMsg) {
+          const repliedMsg = await resolveReplyMessage(webhookDockId, msg.replyToMsg);
+          if (repliedMsg && repliedMsg.senderId) {
+            targetUser = repliedMsg.senderId.username || repliedMsg.senderId.id;
           }
-        } else if (cmdName === "rules") {
-          reply = groupSettings.rules || "No rules set.";
+        }
+        
+        if (!targetUser) {
+          reply = "Arey yaar, disstrack banane ke liye kisi ko tag to karo! E.g. `/disstrack @username` ya reply to their message with `/disstrack`";
+        } else {
+          reply = null;
+          (async () => {
+            try {
+              let cleanedUsername = targetUser.replace(/^@/, "").trim();
+              
+              // 1. Fetch recent messages to build context
+              console.log(`[Webhook DissTrack] Fetching messages context for: ${cleanedUsername}`);
+              const messages = await aero.getMessages(webhookDockId, 100);
+              const targetMsgs = messages.filter(m => 
+                m.senderId?.username?.toLowerCase() === cleanedUsername.toLowerCase() || 
+                m.senderId?._id === cleanedUsername
+              );
+              
+              const firstMsg = targetMsgs[0];
+              const targetFullName = firstMsg ? (firstMsg.senderId?.fullName || firstMsg.senderId?.displayName || cleanedUsername) : cleanedUsername;
+              const targetUsername = firstMsg ? (firstMsg.senderId?.username || cleanedUsername) : cleanedUsername;
+              
+              const recentTexts = targetMsgs.slice(0, 15).map(m => m.text).filter(Boolean).join(" | ");
+              
+              // 2. Query LLM for rap lyrics
+              await aero.sendMessage(webhookDockId, `🎵 Writing a spicy diss track rap for **${targetFullName}**...`);
+              
+              const systemPrompt = `You are a legendary street rap artist who writes spicy, hilarious, light-hearted Hinglish hip-hop diss tracks.`;
+              const userPrompt = `Write a funny, light-hearted Hinglish rap diss track verse (exactly 4 lines, no chorus, no music cues) roasting a user named "${targetFullName}" (@${targetUsername}).
+              
+              Here is the context of what they recently said in the group chat:
+              "${recentTexts || "No recent messages, they are a quiet lurker!"}"
+              
+              Rules:
+              - Exactly 4 rhyming lines.
+              - Mix Hindi and English (Hinglish).
+              - Make it funny and roasting, but keep it friendly.
+              - Return ONLY the 4 lines of lyrics text. Do not output anything else.`;
+              
+              const response = await providers.chatCompletion([
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt }
+              ], { model: "default", max_tokens: 300, temperature: 0.85 });
+              
+              const lyrics = response.choices?.[0]?.message?.content?.trim() || "";
+              console.log(`[Webhook DissTrack] Generated Lyrics:\n${lyrics}`);
+              
+              // 3. Generate vocal
+              console.log(`[Webhook DissTrack] Generating rap vocal (Voice model: ${voiceModel || "default"})...`);
+              const vocalBuffer = await providers.generateTTSAudio(lyrics, "hi", voiceModel);
+              
+              const tempId = Date.now() + "_" + Math.floor(Math.random() * 1000);
+              const fs = require("fs");
+              const path = require("path");
+              const os = require("os");
+              const tempDir = os.tmpdir();
+              
+              const vocalPath = path.join(tempDir, `vocal_${tempId}.mp3`);
+              const outputPath = path.join(tempDir, `diss_${tempId}.mp3`);
+              
+              fs.writeFileSync(vocalPath, vocalBuffer);
+              
+              // 4. Download background beat if not exists
+              const beatPath = path.join(process.cwd(), "db", "flow.mp3");
+              const beatDir = path.dirname(beatPath);
+              if (!fs.existsSync(beatDir)) {
+                fs.mkdirSync(beatDir, { recursive: true });
+              }
+              
+              if (!fs.existsSync(beatPath)) {
+                console.log(`[Webhook DissTrack] Downloading background beat...`);
+                const axios = require("axios");
+                const dlRes = await axios.get("https://archive.org/download/DWK232/BaaskaT_-_01_-_Flow.mp3", { responseType: "arraybuffer" });
+                fs.writeFileSync(beatPath, dlRes.data);
+              }
+              
+              // 5. Run FFmpeg to mix beat and vocal
+              console.log(`[Webhook DissTrack] Mixing via FFmpeg...`);
+              const { exec } = require("child_process");
+              // Speed up vocal by 28% and mix with beat
+              const cmd = `ffmpeg -y -i "${vocalPath}" -i "${beatPath}" -filter_complex "[0:a]atempo=1.28,volume=1.35[vocal];[1:a]volume=0.20[beat];[vocal][beat]amix=inputs=2:duration=first:dropout_transition=0" -ac 2 "${outputPath}"`;
+              
+              exec(cmd, async (error) => {
+                try {
+                  if (fs.existsSync(vocalPath)) fs.unlinkSync(vocalPath);
+                  
+                  if (error) {
+                    throw new Error("FFmpeg mixing failed: " + error.message);
+                  }
+                  
+                  if (fs.existsSync(outputPath)) {
+                    const mixedBuffer = fs.readFileSync(outputPath);
+                    fs.unlinkSync(outputPath);
+                    
+                    const base64Audio = `data:audio/mp3;base64,${mixedBuffer.toString("base64")}`;
+                    
+                    console.log(`[Webhook DissTrack] Sending custom diss track MP3...`);
+                    await aero.sendMessage(webhookDockId, `🔥 **Diss Track Rap for** **${targetFullName}**:\n\n*${lyrics}*`, null, true, base64Audio);
+                  } else {
+                    throw new Error("Output mixed file not found");
+                  }
+                } catch (mixErr) {
+                  console.error("[Webhook DissTrack Mix Error]:", mixErr.message);
+                  await aero.sendMessage(webhookDockId, `❌ Diss track mixing failed: ${mixErr.message}`);
+                }
+              });
+              
+            } catch (err) {
+              console.error("[Webhook DissTrack Command Error]:", err.message);
+              await aero.sendMessage(webhookDockId, `❌ Failed to generate diss track: ${err.message}`);
+            }
+          })();
+        }
+      }
+    } else if (cmdName === "rules") {
+      reply = groupSettings.rules || "No rules set.";
         } else if (cmdName === "faq") {
           reply = groupSettings.faq || bot.faq || "No FAQ set.";
         } else if (cmdName === "status") {
