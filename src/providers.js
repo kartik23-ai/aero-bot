@@ -1303,6 +1303,21 @@ Guidelines:
     // 1. Automatically enhance prompt to Midjourney-level quality
     const enhancedPrompt = await this._enhancePrompt(prompt);
 
+    const localImgUrl = process.env.LOCAL_IMAGE_API_URL;
+    if (localImgUrl) {
+      console.log(`[Providers] Generating image via custom local/Colab API: ${localImgUrl}...`);
+      try {
+        const axios = require("axios");
+        const res = await axios.post(localImgUrl, { prompt: enhancedPrompt }, { timeout: 90000 });
+        if (res.data && res.data.image) {
+          console.log("[Providers] Custom Image API returned base64 image data.");
+          return res.data.image;
+        }
+      } catch (err) {
+        console.warn("[Providers] Custom local/Colab Image API failed, trying fallbacks:", err.message);
+      }
+    }
+
     // 2. PRIMARY: Stable Diffusion 3.5 Large via public HF space
     try {
       console.log("[Providers] Trying Stable Diffusion 3.5 Large via Hugging Face Space...");
