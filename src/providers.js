@@ -1244,7 +1244,39 @@ Guidelines:
     // 1. Automatically enhance prompt to Midjourney-level quality
     const enhancedPrompt = await this._enhancePrompt(prompt);
 
-    // 2. PRIMARY: HuggingFace Serverless Router (FLUX.1-schnell) - Fast & High Quality
+    // 2. PRIMARY: Stable Diffusion 3.5 Large via public HF space
+    try {
+      console.log("[Providers] Trying Stable Diffusion 3.5 Large via Hugging Face Space...");
+      const { Client } = require("@gradio/client");
+      const axios = require("axios");
+      const client = await Client.connect("https://stabilityai-stable-diffusion-3-5-large.hf.space");
+      const result = await client.predict("/infer", {
+        prompt: enhancedPrompt,
+        negative_prompt: "blur, low quality, distorted, bad face",
+        seed: Math.floor(Math.random() * 1000000),
+        randomize_seed: true,
+        width: 1024,
+        height: 1024,
+        guidance_scale: 4.5,
+        num_inference_steps: 25
+      });
+      if (result.data && result.data[0]) {
+        const fileInfo = result.data[0];
+        const imgUrl = fileInfo.url || `https://stabilityai-stable-diffusion-3-5-large.hf.space/gradio_api/file=${fileInfo.path}`;
+        console.log(`[Providers] SD3.5 image generated. Downloading from: ${imgUrl}`);
+        const dlRes = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 25000 });
+        if (dlRes.status === 200 && dlRes.data.length > 500) {
+          const contentType = dlRes.headers["content-type"] || "image/jpeg";
+          const base64 = Buffer.from(dlRes.data).toString("base64");
+          console.log("[Providers] SD3.5 Large generated successfully:", dlRes.data.length, "bytes");
+          return `data:${contentType};base64,${base64}`;
+        }
+      }
+    } catch (err) {
+      console.error("[Providers] SD3.5 Large generation failed:", err.message);
+    }
+
+    // 3. SECONDARY: HuggingFace Serverless Router (FLUX.1-schnell) - Fast & High Quality
     try {
       console.log("[Providers] Trying HuggingFace Serverless FLUX.1-schnell with enhanced prompt...");
       const axios = require("axios");
@@ -1271,7 +1303,7 @@ Guidelines:
       console.error("[Providers] HF FLUX schnell failed:", err.message);
     }
 
-    // 3. SECONDARY: Pollinations AI with Enhanced Prompt & FLUX Realism
+    // 4. TERTIARY: Pollinations AI with Enhanced Prompt & FLUX Realism
     try {
       console.log("[Providers] Trying Pollinations AI (Flux Realism) fallback...");
       const axios = require("axios");
@@ -1293,7 +1325,7 @@ Guidelines:
       console.error("[Providers] Pollinations AI Flux Realism failed:", err.message);
     }
 
-    // 4. TERTIARY: OpenAI DALL-E 3 (if OPENAI_API_KEY exists)
+    // 5. QUATERNARY: OpenAI DALL-E 3 (if OPENAI_API_KEY exists)
     if (process.env.OPENAI_API_KEY) {
       console.log("[Providers] Trying OpenAI DALL-E 3 fallback...");
       try {
