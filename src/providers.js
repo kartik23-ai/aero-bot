@@ -1236,6 +1236,65 @@ Guidelines:
     return prompt;
   }
 
+  async generateImageHorde(prompt) {
+    try {
+      console.log("[Providers] Trying AI Horde (Free Volunteer GPU Cluster)...");
+      const axios = require("axios");
+      
+      const payload = {
+        prompt: prompt,
+        params: {
+          sampler_name: "k_dpmpp_2s_a",
+          cfg_scale: 7,
+          width: 1024,
+          height: 1024,
+          steps: 20,
+          n: 1
+        },
+        models: ["FLUX.1-schnell"]
+      };
+      
+      const headers = {
+        "apikey": "0000000000",
+        "Client-Agent": "aero-bot:1.0:github",
+        "Content-Type": "application/json"
+      };
+      
+      const initRes = await axios.post("https://aihorde.net/api/v2/generate/async", payload, { headers, timeout: 15000 });
+      const jobId = initRes.data?.id;
+      if (!jobId) throw new Error("No job ID returned from AI Horde");
+      
+      console.log(`[Providers] AI Horde job registered: ${jobId}. Polling status...`);
+      
+      let attempts = 0;
+      while (attempts < 15) {
+        attempts++;
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        const checkRes = await axios.get(`https://aihorde.net/api/v2/generate/check/${jobId}`, { headers, timeout: 10000 });
+        const check = checkRes.data;
+        console.log(`[Providers] AI Horde poll ${attempts}: done=${check.done}, wait=${check.wait_time}s`);
+        
+        if (check.done) {
+          const statusRes = await axios.get(`https://aihorde.net/api/v2/generate/status/${jobId}`, { headers, timeout: 10000 });
+          const imgUrl = statusRes.data?.generations?.[0]?.img;
+          if (imgUrl) {
+            console.log(`[Providers] AI Horde image ready! Downloading: ${imgUrl}`);
+            const dlRes = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 25000 });
+            const base64 = Buffer.from(dlRes.data).toString("base64");
+            const contentType = dlRes.headers["content-type"] || "image/webp";
+            return `data:${contentType};base64,${base64}`;
+          }
+          throw new Error("No image URL in status response");
+        }
+      }
+      throw new Error("AI Horde generation timed out");
+    } catch (err) {
+      console.error("[Providers] AI Horde failed:", err.message);
+      throw err;
+    }
+  }
+
   // =============================================
   // IMAGE GENERATION — Pollinations AI + HF
   // Free, no key, reliable, next-level photorealistic quality
@@ -1303,7 +1362,14 @@ Guidelines:
       console.error("[Providers] HF FLUX schnell failed:", err.message);
     }
 
-    // 4. TERTIARY: Pollinations AI with Enhanced Prompt & FLUX Realism
+    // 4. TERTIARY: AI Horde Free Volunteer GPU Cluster
+    try {
+      return await this.generateImageHorde(enhancedPrompt);
+    } catch (err) {
+      console.error("[Providers] AI Horde fallback failed:", err.message);
+    }
+
+    // 5. QUATERNARY: Pollinations AI with Enhanced Prompt & FLUX Realism
     try {
       console.log("[Providers] Trying Pollinations AI (Flux Realism) fallback...");
       const axios = require("axios");
@@ -1363,6 +1429,37 @@ Guidelines:
     }
 
     throw new Error("All image generation methods failed.");
+  }
+
+  // =============================================
+  // VIDEO GENERATION — Pollinations AI
+  // Uses user's POLLINATIONS_API_KEY from env
+  // =============================================
+  async generateVideo(prompt) {
+    const apiKey = process.env.POLLINATIONS_API_KEY;
+    if (!apiKey) {
+      throw new Error("POLLINATIONS_API_KEY is not set in environment variables.");
+    }
+    
+    console.log(`[Providers] Generating video via Pollinations Wan model...`);
+    const axios = require("axios");
+    const url = `https://gen.pollinations.ai/video/${encodeURIComponent(prompt)}?model=wan&key=${apiKey}&width=1280&height=720`;
+    
+    try {
+      const res = await axios.get(url, { responseType: "arraybuffer", timeout: 60000 });
+      const contentType = res.headers["content-type"] || "video/mp4";
+      if (contentType.includes("application/json")) {
+        const bodyText = Buffer.from(res.data).toString("utf-8");
+        const json = JSON.parse(bodyText);
+        throw new Error(json.error?.message || "Pollinations returned error JSON");
+      }
+      
+      const base64 = Buffer.from(res.data).toString("base64");
+      return `data:${contentType};base64,${base64}`;
+    } catch (err) {
+      console.error("[Providers] Pollinations video generation failed:", err.message);
+      throw err;
+    }
   }
 
   // =============================================

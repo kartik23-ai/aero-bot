@@ -3510,6 +3510,33 @@ CRITICAL RULES:
         })();
         reply = null;
       }
+    } else if (cmdName === "video") {
+      if (!argsText) {
+        reply = "Please specify a prompt for the video. E.g. /video a futuristic car driving fast in Tokyo";
+      } else {
+        const prompt = argsText;
+        const textContent = `🎬 **Aero AI Video Generator**\n\n**Prompt:** "${prompt}"`;
+        
+        (async () => {
+          try {
+            if (!process.env.POLLINATIONS_API_KEY) {
+              await aero.sendMessage(dockId, "❌ Video generation key is not set. Please add a valid Pollinations API key to the environment.");
+              return;
+            }
+            console.log(`[Video Command] Initiating video generation for: "${prompt}"`);
+            const base64Uri = await providers.generateVideo(prompt);
+            await aero.sendMessage(dockId, textContent, base64Uri);
+          } catch (err) {
+            console.error("[Video Command Error]:", err.message);
+            if (err.message.includes("Insufficient balance") || err.message.includes("Payment Required")) {
+              await aero.sendMessage(dockId, "❌ Pollinations API key has insufficient balance. Please add credits to your account.");
+            } else {
+              await aero.sendMessage(dockId, `❌ Failed to generate video: ${err.message}`);
+            }
+          }
+        })();
+        reply = null;
+      }
     } else if (cmdName === "catchup" || cmdName === "recap") {
       if (groupSettings.botDisabled) return;
       reply = null;
@@ -5223,6 +5250,32 @@ I will automatically log it as a task and keep you updated! 😊`;
               } catch (err) {
                 console.error("[Webhook Draw Command Error]:", err.message);
                 await aero.sendMessage(webhookDockId, "❌ Failed to generate image. Please try again with a different prompt.");
+              }
+            })();
+            reply = null;
+          }
+        } else if (cmdName === "video") {
+          if (!argsText) {
+            reply = "Please specify a prompt for the video. E.g. /video a futuristic car driving fast in Tokyo";
+          } else {
+            const prompt = argsText;
+            const textContent = `🎬 **Aero AI Video Generator**\n\n**Prompt:** "${prompt}"`;
+            (async () => {
+              try {
+                if (!process.env.POLLINATIONS_API_KEY) {
+                  await aero.sendMessage(webhookDockId, "❌ Video generation key is not set. Please add a valid Pollinations API key to the environment.");
+                  return;
+                }
+                console.log(`[Webhook Video Command] Initiating video generation for: "${prompt}"`);
+                const base64Uri = await providers.generateVideo(prompt);
+                await aero.sendMessage(webhookDockId, textContent, base64Uri);
+              } catch (err) {
+                console.error("[Webhook Video Command Error]:", err.message);
+                if (err.message.includes("Insufficient balance") || err.message.includes("Payment Required")) {
+                  await aero.sendMessage(webhookDockId, "❌ Pollinations API key has insufficient balance. Please add credits to your account.");
+                } else {
+                  await aero.sendMessage(webhookDockId, `❌ Failed to generate video: ${err.message}`);
+                }
               }
             })();
             reply = null;
