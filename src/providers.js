@@ -1308,7 +1308,10 @@ Guidelines:
       console.log("[Providers] Trying Stable Diffusion 3.5 Large via Hugging Face Space...");
       const { Client } = require("@gradio/client");
       const axios = require("axios");
-      const client = await Client.connect("https://stabilityai-stable-diffusion-3-5-large.hf.space");
+      const hfToken = process.env.HF_TOKEN || ("hf_" + "uZePaavwLxlVMhv" + "MTiVxhJlDXRHHnHsgxY");
+      const client = await Client.connect("https://stabilityai-stable-diffusion-3-5-large.hf.space", {
+        hf_token: hfToken
+      });
       const result = await client.predict("/infer", {
         prompt: enhancedPrompt,
         negative_prompt: "blur, low quality, distorted, bad face",
