@@ -528,87 +528,13 @@ class ProviderManager {
       }
     }
 
-    // 0. RVC Celebrity Voice Clone Check (Dynamic download & convert)
+    let selectedVoice = "hi-IN-MadhurNeural";
     if (voiceModel) {
-      const CELEB_MODELS = {
-        modi: {
-          url: "https://huggingface.co/Hazza1/ModiGOW/resolve/main/modi.zip",
-          name: "modi",
-          edgeVoice: "hi-IN-MadhurNeural"
-        },
-        carry: {
-          url: "https://huggingface.co/Vissy/CarryMinati/resolve/main/carryminati.zip",
-          name: "carryminati",
-          edgeVoice: "hi-IN-MadhurNeural"
-        }
-      };
-      
-      const model = CELEB_MODELS[voiceModel.toLowerCase()];
-      if (model) {
-        try {
-          console.log(`[TTS-RVC] Connecting to RVC space for model: ${model.name}...`);
-          const rootUrl = "https://jackismyshephard-ultimate-rvc.hf.space/gradio_api";
-          const session_hash = Math.random().toString(36).substring(2, 13);
-          
-          // Step 1: Download model (fn_index 75)
-          try {
-            console.log(`[TTS-RVC] Downloading/checking model: ${model.name}...`);
-            await runGradioTask(rootUrl, 75, [model.url, model.name], session_hash);
-          } catch (err) {
-            if (!err.message.includes("already exists")) {
-              throw err;
-            }
-            console.log(`[TTS-RVC] Model "${model.name}" already exists on server.`);
-          }
-          
-          // Step 2: Refresh dropdown choices (fn_index 195)
-          console.log(`[TTS-RVC] Refreshing dropdown choices...`);
-          await runGradioTask(rootUrl, 195, [], session_hash);
-          
-          // Step 3: Run voice conversion (fn_index 51)
-          console.log(`[TTS-RVC] Executing RVC prediction...`);
-          const convertRes = await runGradioTask(rootUrl, 51, [
-            text, // Source (text prompt)
-            model.name, // Voice model
-            model.edgeVoice, // Edge TTS voice
-            0, // Edge TTS pitch shift
-            0, // TTS speed change
-            0, // TTS volume change
-            0, // Octave shift
-            0, // Semitone shift
-            "rmvpe", // Pitch extraction algorithm
-            0.75, // Index rate
-            0.25, // RMS mix rate
-            0.33, // Protect rate
-            false, // Split input voice
-            false, // Autotune converted voice
-            1, // Autotune intensity
-            false, // Proposed pitch
-            155, // Proposed pitch threshold
-            false, // Clean converted voice
-            0.7, // Cleaning intensity
-            "contentvec", // Embedder model
-            null, // Custom embedder model (Dropdown choices empty)
-            0, // Speaker ID
-            0, // Output gain
-            48000, // Output sample rate (Dropdown choice number)
-            "mp3", // Output format
-            "speech_" + Date.now() // Output name
-          ], session_hash);
-          
-          const outputAudio = convertRes.data?.[0];
-          if (outputAudio && (outputAudio.url || outputAudio.path || outputAudio.name)) {
-            const downloadUrl = outputAudio.url || `https://jackismyshephard-ultimate-rvc.hf.space/gradio_api/file=${outputAudio.path || outputAudio.name}`;
-            console.log(`[TTS-RVC] Downloading converted audio from: ${downloadUrl}`);
-            const dlRes = await axios.get(downloadUrl, { responseType: "arraybuffer" });
-            console.log(`[TTS-RVC] Voice cloning completed successfully!`);
-            return Buffer.from(dlRes.data);
-          } else {
-            throw new Error("No output audio path in prediction result");
-          }
-        } catch (rvcErr) {
-          console.error("[TTS-RVC] RVC cloning failed, falling back to standard Edge TTS:", rvcErr.message);
-        }
+      const modelLower = voiceModel.toLowerCase();
+      if (modelLower === "modi" || modelLower === "carry") {
+        selectedVoice = "hi-IN-MadhurNeural";
+      } else if (modelLower === "female" || modelLower === "swara") {
+        selectedVoice = "hi-IN-SwaraNeural";
       }
     }
 
@@ -665,9 +591,9 @@ class ProviderManager {
 
     // 3. Microsoft Edge Neural keyless TTS (Genuine, extremely realistic human voice for Hinglish/Hindi/English)
     try {
-      console.log("[TTS] Using Microsoft Edge Neural TTS voice (hi-IN-MadhurNeural)...");
+      console.log(`[TTS] Using Microsoft Edge Neural TTS voice (${selectedVoice})...`);
       const { Communicate } = require("edge-tts-universal");
-      const comm = new Communicate(text, { voice: "hi-IN-MadhurNeural" });
+      const comm = new Communicate(text, { voice: selectedVoice });
       const chunks = [];
       for await (const chunk of comm.stream()) {
         if (chunk.type === "audio") {
