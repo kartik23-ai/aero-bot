@@ -309,39 +309,23 @@ class AeroAPI {
             url = `${API_BASE}/messages/send/${item.dockId}`;
           }
           let res;
-          if (item.document && item.asVoiceNote) {
-            const form = new globalThis.FormData();
-            const blob = new globalThis.Blob([item.document], { type: "audio/ogg" });
-            form.append("document", blob, `voice_${Date.now()}.ogg`);
-            form.append("text", item.text || "");
-            form.append("messageType", "voice");
-            form.append("duration", "5000");
-
-            console.log(`[AeroAPI] [Outbound Queue] Sending voice note to ${item.dockId}...`);
-            res = await axios.post(
-              url,
-              form,
-              { headers: this._authHeaders() }
-            );
-          } else {
-            const payload = { text: item.text };
-            if (item.image) {
-              payload.image = item.image;
-            }
-            if (item.document) {
-              payload.document = item.document;
-            }
-            if (item.attachment) {
-              payload.attachment = item.attachment;
-            }
-            
-            console.log(`[AeroAPI] [Outbound Queue] Sending message to ${item.dockId}: "${item.text}"`);
-            res = await axios.post(
-              url,
-              payload,
-              { headers: this._authHeaders() }
-            );
+          const payload = { text: item.text };
+          if (item.image) {
+            payload.image = item.image;
           }
+          if (item.document) {
+            payload.document = item.document;
+          }
+          if (item.attachment) {
+            payload.attachment = item.attachment;
+          }
+          
+          console.log(`[AeroAPI] [Outbound Queue] Sending message to ${item.dockId}: "${item.text}"`);
+          res = await axios.post(
+            url,
+            payload,
+            { headers: this._authHeaders() }
+          );
           const sentTime = Date.now();
           this._lastMessageSentTime = sentTime;
           this._sentMessageTimestamps.push(sentTime);

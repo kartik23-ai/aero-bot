@@ -1272,56 +1272,60 @@ class ProviderManager {
   // IMAGE GENERATION — Pollinations AI (PRIMARY)
   // Free, no key, reliable, high quality
   // =============================================
-  async generateImage(prompt) {
-    // 1. PRIMARY: HuggingFace Space Gradio Client Cascade
+  async _enhancePrompt(prompt) {
     try {
-      const { Client } = require("@gradio/client");
-      const axios = require("axios");
-      const hfToken = process.env.HF_TOKEN || ("hf_" + "uZePaavwLxlVMhv" + "MTiVxhJlDXRHHnHsgxY");
+      const systemPrompt = `You are a professional prompt engineer for text-to-image AI (like Midjourney or DALL-E 3). Your job is to expand the user's short input prompt into a highly descriptive, detailed, and photorealistic prompt. 
+Guidelines:
+1. Make it extremely detailed: describe the subject, camera angle, lighting (e.g., volumetric, cinematic, dramatic), background, and art style.
+2. Focus on realism: add keywords like "photorealistic, hyper-detailed, 8k resolution, shot on 85mm lens, award-winning photography".
+3. Keep the output CONCISE (around 50-80 words). Output ONLY the expanded prompt. Do NOT include any intro, outro, or explanations.`;
       
-      const spaces = [
-        { name: "black-forest-labs/FLUX.1-dev", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 28 } },
-        { name: "multimodalart/FLUX.1-schnell", api: "/infer", params: { prompt, seed: 0, randomize_seed: true, width: 1024, height: 1024, num_inference_steps: 4 } }
+      console.log(`[Providers] Enhancing prompt: "${prompt}"...`);
+      const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: prompt }
       ];
-
-      for (const space of spaces) {
-        try {
-          console.log(`[Providers] Connecting to HuggingFace Gradio Space: ${space.name}...`);
-          const client = await Client.connect(space.name, {
-            hf_token: `Bearer ${hfToken}`
-          });
-          console.log(`[Providers] Gradio connected! Generating image via ${space.name}...`);
-          const result = await client.predict(space.api, space.params);
-          if (result.data && result.data[0]) {
-            const imgInfo = result.data[0];
-            const imgUrl = typeof imgInfo === "string" ? imgInfo : imgInfo.url;
-            if (imgUrl) {
-              console.log(`[Providers] Image URL obtained from ${space.name}, downloading...`);
-              const imgRes = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 25000 });
-              if (imgRes.status === 200 && imgRes.data.length > 500) {
-                const contentType = imgRes.headers["content-type"] || "image/png";
-                const base64 = Buffer.from(imgRes.data).toString("base64");
-                console.log(`[Providers] Image generated successfully via ${space.name}:`, imgRes.data.length, "bytes");
-                return `data:${contentType};base64,${base64}`;
-              }
-            }
-          }
-        } catch (spaceErr) {
-          console.error(`[Providers] Gradio Space ${space.name} failed:`, spaceErr.message);
-        }
+      
+      let enhanced = "";
+      if (this._groqClient) {
+        const completion = await this._groqClient.chat.completions.create({
+          messages,
+          model: "llama-3.3-70b-versatile",
+          temperature: 0.7,
+          max_tokens: 150
+        });
+        enhanced = completion.choices[0].message.content.trim();
+      } else {
+        enhanced = await this.llm7Completion(messages, "qwen3-235b", 150, 0.7);
       }
-    } catch (err) {
-      console.error("[Providers] Gradio cascade setup failed:", err.message);
+      
+      if (enhanced) {
+        enhanced = enhanced.replace(/^["']|["']$/g, "").trim();
+        console.log(`[Providers] Enhanced prompt: "${enhanced}"`);
+        return enhanced;
+      }
+    } catch (e) {
+      console.warn(`[Providers] Prompt enhancement failed:`, e.message);
     }
+    return prompt;
+  }
 
-    // 2. SECONDARY: HuggingFace Serverless Router (FLUX.1-schnell) - Fast & High Quality
+  // =============================================
+  // IMAGE GENERATION — Pollinations AI + HF
+  // Free, no key, reliable, next-level photorealistic quality
+  // =============================================
+  async generateImage(prompt) {
+    // 1. Automatically enhance prompt to Midjourney-level quality
+    const enhancedPrompt = await this._enhancePrompt(prompt);
+
+    // 2. PRIMARY: HuggingFace Serverless Router (FLUX.1-schnell) - Fast & High Quality
     try {
-      console.log("[Providers] Trying HuggingFace Serverless FLUX.1-schnell...");
+      console.log("[Providers] Trying HuggingFace Serverless FLUX.1-schnell with enhanced prompt...");
       const axios = require("axios");
       const hfToken = process.env.HF_TOKEN || ("hf_" + "uZePaavwLxlVMhv" + "MTiVxhJlDXRHHnHsgxY");
       const res = await axios.post(
         "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
-        { inputs: prompt },
+        { inputs: enhancedPrompt },
         {
           headers: {
             "Authorization": `Bearer ${hfToken}`,
@@ -1341,12 +1345,34 @@ class ProviderManager {
       console.error("[Providers] HF FLUX schnell failed:", err.message);
     }
 
-    // 3. TERTIARY: OpenAI DALL-E 3 (if OPENAI_API_KEY exists)
+    // 3. SECONDARY: Pollinations AI with Enhanced Prompt & FLUX Realism
+    try {
+      console.log("[Providers] Trying Pollinations AI (Flux Realism) fallback...");
+      const axios = require("axios");
+      const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=1024&height=1024&nologo=true&private=true&model=flux-realism&seed=${Math.floor(Math.random() * 1000000)}`;
+      const res = await axios.get(polUrl, {
+        responseType: "arraybuffer",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        },
+        timeout: 35000
+      });
+      const contentType = res.headers["content-type"] || "image/jpeg";
+      if (res.status === 200 && res.data.length > 500) {
+        console.log("[Providers] Pollinations AI Flux Realism generated successfully:", res.data.length, "bytes");
+        const base64 = Buffer.from(res.data).toString("base64");
+        return `data:${contentType};base64,${base64}`;
+      }
+    } catch (err) {
+      console.error("[Providers] Pollinations AI Flux Realism failed:", err.message);
+    }
+
+    // 4. TERTIARY: OpenAI DALL-E 3 (if OPENAI_API_KEY exists)
     if (process.env.OPENAI_API_KEY) {
-      console.log("[Providers] Trying OpenAI DALL-E 3...");
+      console.log("[Providers] Trying OpenAI DALL-E 3 fallback...");
       try {
         const payload = JSON.stringify({
-          model: "dall-e-3", prompt, n: 1, size: "1024x1024", response_format: "b64_json"
+          model: "dall-e-3", prompt: enhancedPrompt, n: 1, size: "1024x1024", response_format: "b64_json"
         });
         const response = await new Promise((resolve, reject) => {
           const req = https.request({
@@ -1376,28 +1402,6 @@ class ProviderManager {
       } catch (err) {
         console.error("[Providers] DALL-E 3 failed:", err.message);
       }
-    }
-
-    // 4. QUATERNARY: Pollinations AI (free, always available, upgraded to FLUX model)
-    try {
-      console.log("[Providers] Trying Pollinations AI (Flux) fallback...");
-      const axios = require("axios");
-      const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&private=true&enhance=true&model=flux&seed=${Date.now()}`;
-      const res = await axios.get(polUrl, {
-        responseType: "arraybuffer",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        },
-        timeout: 35000
-      });
-      const contentType = res.headers["content-type"] || "image/jpeg";
-      if (res.status === 200 && res.data.length > 500) {
-        console.log("[Providers] Pollinations AI Flux image generated successfully:", res.data.length, "bytes");
-        const base64 = Buffer.from(res.data).toString("base64");
-        return `data:${contentType};base64,${base64}`;
-      }
-    } catch (err) {
-      console.error("[Providers] Pollinations AI Flux failed:", err.message);
     }
 
     throw new Error("All image generation methods failed.");
