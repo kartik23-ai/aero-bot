@@ -1436,13 +1436,38 @@ Guidelines:
   // Uses user's POLLINATIONS_API_KEY from env
   // =============================================
   async generateVideo(prompt) {
+    const localApiUrl = process.env.LOCAL_VIDEO_API_URL;
+    const axios = require("axios");
+
+    if (localApiUrl) {
+      console.log(`[Providers] Generating video via custom local/Colab API: ${localApiUrl}...`);
+      try {
+        const res = await axios.post(localApiUrl, { prompt }, { timeout: 150000 });
+        if (res.data) {
+          if (res.data.video && res.data.video.startsWith("data:video")) {
+            console.log("[Providers] Custom API returned base64 video data.");
+            return res.data.video;
+          }
+          if (res.data.url) {
+            console.log(`[Providers] Custom API returned video URL: ${res.data.url}. Downloading...`);
+            const dlRes = await axios.get(res.data.url, { responseType: "arraybuffer", timeout: 35000 });
+            const base64 = Buffer.from(dlRes.data).toString("base64");
+            const contentType = dlRes.headers["content-type"] || "video/mp4";
+            return `data:${contentType};base64,${base64}`;
+          }
+        }
+        throw new Error("Invalid response format from custom Video API (expected { video } or { url })");
+      } catch (err) {
+        console.warn("[Providers] Custom local/Colab Video API failed, trying Pollinations fallback:", err.message);
+      }
+    }
+
     const apiKey = process.env.POLLINATIONS_API_KEY;
     if (!apiKey) {
-      throw new Error("POLLINATIONS_API_KEY is not set in environment variables.");
+      throw new Error("Neither LOCAL_VIDEO_API_URL nor POLLINATIONS_API_KEY is configured.");
     }
     
     console.log(`[Providers] Generating video via Pollinations Wan model...`);
-    const axios = require("axios");
     const url = `https://gen.pollinations.ai/video/${encodeURIComponent(prompt)}?model=wan&key=${apiKey}&width=1280&height=720`;
     
     try {
