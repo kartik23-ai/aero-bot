@@ -85,6 +85,7 @@ const bot = new AeroGroupGuard({ ownerId: "owner-1", botMention: "@AeroGroupGuar
 const ai = new AiAssistant({ model: config.aiModel });
 const { PaperclipEngine } = require("./paperclip-engine");
 const { providers } = require("./providers");
+const utils = require("./utility-apis");
 
 let _totalBytesIn = 0;
 let _totalBytesOut = 0;
@@ -3624,6 +3625,27 @@ CRITICAL RULES:
       }
       reply = null;
       handleMemeCommand(dockId, senderId, senderName, argsText, groupSettings);
+    } else if (cmdName === "movie") {
+      if (!argsText) {
+        reply = "Please specify a movie name. E.g. /movie Jawan";
+      } else {
+        const title = argsText;
+        (async () => {
+          try {
+            console.log(`[Movie Command] Searching for movie: "${title}"`);
+            const result = await utils.getMovie(title);
+            if (result.error) {
+              await aero.sendMessage(dockId, `❌ Movie search failed: ${result.error}`);
+            } else {
+              await aero.sendMessage(dockId, result.text);
+            }
+          } catch (err) {
+            console.error("[Movie Command Error]:", err.message);
+            await aero.sendMessage(dockId, `❌ Failed to fetch movie: ${err.message}`);
+          }
+        })();
+        reply = null;
+      }
     } else if (cmdName === "issue") {
       const isSenderAdmin = await checkIsAdmin(dockId, senderId);
       if (!isSenderAdmin) {
@@ -5367,6 +5389,27 @@ I will automatically log it as a task and keep you updated! 😊`;
           }
           reply = null;
           handleMemeCommand(webhookDockId, senderId, senderName, argsText, groupSettings);
+        } else if (cmdName === "movie") {
+          if (!argsText) {
+            reply = "Please specify a movie name. E.g. /movie Jawan";
+          } else {
+            const title = argsText;
+            (async () => {
+              try {
+                console.log(`[Webhook Movie Command] Searching for movie: "${title}"`);
+                const result = await utils.getMovie(title);
+                if (result.error) {
+                  await aero.sendMessage(webhookDockId, `❌ Movie search failed: ${result.error}`);
+                } else {
+                  await aero.sendMessage(webhookDockId, result.text);
+                }
+              } catch (err) {
+                console.error("[Webhook Movie Command Error]:", err.message);
+                await aero.sendMessage(webhookDockId, `❌ Failed to fetch movie: ${err.message}`);
+              }
+            })();
+            reply = null;
+          }
         } else if (cmdName === "play") {
           if (groupSettings.botDisabled) {
             console.log(`[BotControl] Bot is disabled for dock ${webhookDockId}. Skipping webhook play command.`);

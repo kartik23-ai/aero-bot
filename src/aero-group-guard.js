@@ -65,7 +65,9 @@ const USER_COMMANDS = new Set([
   "summaryrequest",
   "draw",
   "meme",
-  "remind"
+  "remind",
+  "movie",
+  "video"
 ]);
 
 class AeroGroupGuard {
