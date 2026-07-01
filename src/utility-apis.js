@@ -254,26 +254,44 @@ async function getMovie(title) {
     const movie = res.data?.results?.[0];
     if (!movie) return { text: `🎬 "${title}" movie nahi mili.` };
 
-    // Fetch details to resolve IMDb ID for free streaming links
-    let watchLinks = "";
+    // Fetch details to resolve IMDb ID and official watch providers
+    let watchInfo = "";
     try {
-      const detailUrl = `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${apiKey}&language=en-US`;
-      const detailRes = await httpGet(detailUrl);
-      const imdbId = detailRes.data?.imdb_id;
-      if (imdbId || movie.id) {
-        watchLinks = `\n\n🔗 Free Watch Links (Jio/Airtel Friendly & Hindi/Multi-Audio):\n`;
-        if (imdbId) {
-          watchLinks += `- SmashyStream (Server 1 - Jio/Airtel OK): https://player.smashy.stream/movie/${imdbId}\n`;
-          watchLinks += `- Autoembed.to (Server 2 - Hindi/Multi-Audio): https://autoembed.to/movie/tmdb/${movie.id}\n`;
-          watchLinks += `- Autoembed.cc (Server 3 - Jio/Airtel OK): https://player.autoembed.cc/embed/movie/${imdbId}\n`;
-          watchLinks += `- Vidsrc.cc (Server 4 - Direct): https://vidsrc.cc/v2/embed/movie/${imdbId}\n`;
-        } else {
-          watchLinks += `- Autoembed.to (Server 1 - Hindi/Multi-Audio): https://autoembed.to/movie/tmdb/${movie.id}\n`;
-          watchLinks += `- Vidsrc.xyz (Server 2): https://vidsrc.xyz/embed/movie/${movie.id}\n`;
+      const providersUrl = `https://api.themoviedb.org/3/movie/${movie.id}/watch/providers?api_key=${apiKey}`;
+      const providersRes = await httpGet(providersUrl);
+      const indiaResults = providersRes.data?.results?.IN;
+      
+      if (indiaResults) {
+        watchInfo = `\n\n🎬 Official Streaming (India):\n`;
+        let found = false;
+        if (indiaResults.flatrate) {
+          watchInfo += `- Subscription: ${indiaResults.flatrate.map(p => p.provider_name).join(", ")}\n`;
+          found = true;
         }
+        if (indiaResults.ads) {
+          watchInfo += `- Free (with Ads): ${indiaResults.ads.map(p => p.provider_name).join(", ")}\n`;
+          found = true;
+        }
+        if (indiaResults.rent) {
+          watchInfo += `- Rent: ${indiaResults.rent.map(p => p.provider_name).join(", ")}\n`;
+          found = true;
+        }
+        if (indiaResults.buy) {
+          watchInfo += `- Buy: ${indiaResults.buy.map(p => p.provider_name).join(", ")}\n`;
+          found = true;
+        }
+        if (indiaResults.link) {
+          watchInfo += `\n🔗 JustWatch (Safe Link):\n${indiaResults.link}\n`;
+        }
+        if (!found) {
+          watchInfo = `\n\n🎬 Official Streaming: Currently not streaming on subscription services in India. Check JustWatch link for updates:\n${indiaResults.link || "https://www.justwatch.com/in"}`;
+        }
+      } else {
+        watchInfo = `\n\n🎬 Official Streaming: Search on JustWatch (Safe):\nhttps://www.justwatch.com/in/search?q=${encodeURIComponent(movie.title)}`;
       }
     } catch (detailErr) {
-      console.warn("[MoviesAPI] Failed to fetch movie details for IMDb link:", detailErr.message);
+      console.warn("[MoviesAPI] Failed to fetch watch providers:", detailErr.message);
+      watchInfo = `\n\n🎬 Official Streaming: Search on JustWatch (Safe):\nhttps://www.justwatch.com/in/search?q=${encodeURIComponent(movie.title)}`;
     }
 
     return {
