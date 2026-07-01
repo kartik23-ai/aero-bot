@@ -261,15 +261,15 @@ async function getMovie(title) {
       const detailRes = await httpGet(detailUrl);
       const imdbId = detailRes.data?.imdb_id;
       if (imdbId || movie.id) {
-        watchLinks = `\n\n🔗 Free Watch Links (Streaming):\n`;
+        watchLinks = `\n\n🔗 Free Watch Links (Jio/Airtel Friendly & Hindi/Multi-Audio):\n`;
         if (imdbId) {
-          watchLinks += `- Vidsrc.cc (Server 1): https://vidsrc.cc/v2/embed/movie/${imdbId}\n`;
-          watchLinks += `- Vidsrc.to (Server 2): https://vidsrc.to/embed/movie/${imdbId}\n`;
-          watchLinks += `- Autoembed (Server 3): https://player.autoembed.cc/embed/movie/${imdbId}\n`;
-          watchLinks += `- Multiembed (Server 4): https://multiembed.to/?video_id=${imdbId}\n`;
+          watchLinks += `- SmashyStream (Server 1 - Jio/Airtel OK): https://player.smashy.stream/movie/${imdbId}\n`;
+          watchLinks += `- Autoembed.to (Server 2 - Hindi/Multi-Audio): https://autoembed.to/movie/tmdb/${movie.id}\n`;
+          watchLinks += `- Autoembed.cc (Server 3 - Jio/Airtel OK): https://player.autoembed.cc/embed/movie/${imdbId}\n`;
+          watchLinks += `- Vidsrc.cc (Server 4 - Direct): https://vidsrc.cc/v2/embed/movie/${imdbId}\n`;
         } else {
-          watchLinks += `- Vidsrc.xyz (Server 1): https://vidsrc.xyz/embed/movie/${movie.id}\n`;
-          watchLinks += `- Embed.su (Server 2): https://embed.su/embed/movie/${movie.id}\n`;
+          watchLinks += `- Autoembed.to (Server 1 - Hindi/Multi-Audio): https://autoembed.to/movie/tmdb/${movie.id}\n`;
+          watchLinks += `- Vidsrc.xyz (Server 2): https://vidsrc.xyz/embed/movie/${movie.id}\n`;
         }
       }
     } catch (detailErr) {
