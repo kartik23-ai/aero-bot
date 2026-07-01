@@ -1303,6 +1303,24 @@ Guidelines:
     // 1. Automatically enhance prompt to Midjourney-level quality
     const enhancedPrompt = await this._enhancePrompt(prompt);
 
+    // PRIMARY: Pollinations FLUX.2 [Dev] (32B Parameter Visual Intelligence) - 100% Free, Keyless, 24/7 Stable
+    try {
+      console.log("[Providers] Querying Pollinations FLUX.2 [Dev]...");
+      const axios = require("axios");
+      const seed = Math.floor(Math.random() * 1000000);
+      const polUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(enhancedPrompt)}?width=1024&height=1024&nologo=true&private=true&model=flux-2-dev&seed=${seed}`;
+      const res = await axios.get(polUrl, { responseType: "arraybuffer", timeout: 45000 });
+      if (res.status === 200 && res.data.length > 500) {
+        const contentType = res.headers["content-type"] || "image/jpeg";
+        const base64 = Buffer.from(res.data).toString("base64");
+        console.log("[Providers] FLUX.2 [Dev] generated successfully.");
+        return `data:${contentType};base64,${base64}`;
+      }
+    } catch (err) {
+      console.error("[Providers] FLUX.2 [Dev] failed, trying local/fallbacks:", err.message);
+    }
+
+    // SECONDARY: Local server / custom Colab (fallback)
     const localImgUrl = process.env.LOCAL_IMAGE_API_URL;
     if (localImgUrl) {
       console.log(`[Providers] Generating image via custom local/Colab API: ${localImgUrl}...`);
@@ -1314,7 +1332,7 @@ Guidelines:
           return res.data.image;
         }
       } catch (err) {
-        console.warn("[Providers] Custom local/Colab Image API failed, trying fallbacks:", err.message);
+        console.warn("[Providers] Custom local/Colab Image API failed, trying other fallbacks:", err.message);
       }
     }
 
@@ -1455,8 +1473,35 @@ Guidelines:
   // =============================================
   async generateVideo(prompt) {
     const localApiUrl = process.env.LOCAL_VIDEO_API_URL;
+    const falKey = process.env.FAL_KEY;
     const axios = require("axios");
 
+    // 1. PRIMARY: Fal.ai HunyuanVideo (Tencent 3D Cinematic Render) - 100% Free Developer Credits
+    if (falKey) {
+      console.log("[Providers] Generating next-level video via Fal.ai HunyuanVideo...");
+      try {
+        const { fal } = require("@fal-ai/client");
+        process.env.FAL_KEY = falKey;
+        const result = await fal.subscribe("fal-ai/hunyuan-video", {
+          input: {
+            prompt: prompt,
+            num_frames: 16,
+            aspect_ratio: "16:9"
+          }
+        });
+        if (result.video && result.video.url) {
+          console.log(`[Providers] Fal.ai video generated successfully. Downloading from: ${result.video.url}`);
+          const dlRes = await axios.get(result.video.url, { responseType: "arraybuffer", timeout: 45000 });
+          const base64 = Buffer.from(dlRes.data).toString("base64");
+          const contentType = dlRes.headers["content-type"] || "video/mp4";
+          return `data:${contentType};base64,${base64}`;
+        }
+      } catch (err) {
+        console.warn("[Providers] Fal.ai video generation failed, trying other fallbacks:", err.message);
+      }
+    }
+
+    // 2. SECONDARY: Local server / custom Kaggle (fallback)
     if (localApiUrl) {
       console.log(`[Providers] Generating video via custom local/Colab API: ${localApiUrl}...`);
       try {

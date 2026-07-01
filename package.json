@@ -17,6 +17,7 @@
   "license": "UNLICENSED",
   "type": "commonjs",
   "dependencies": {
+    "@fal-ai/client": "^1.10.1",
     "@google/genai": "^2.8.0",
     "@gradio/client": "^2.3.0",
     "axios": "^1.17.0",

@@ -254,8 +254,30 @@ async function getMovie(title) {
     const movie = res.data?.results?.[0];
     if (!movie) return { text: `🎬 "${title}" movie nahi mili.` };
 
+    // Fetch details to resolve IMDb ID for free streaming links
+    let watchLinks = "";
+    try {
+      const detailUrl = `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${apiKey}&language=en-US`;
+      const detailRes = await httpGet(detailUrl);
+      const imdbId = detailRes.data?.imdb_id;
+      if (imdbId || movie.id) {
+        watchLinks = `\n\n🔗 **Free Watch Links (Streaming):**\n`;
+        if (imdbId) {
+          watchLinks += `- **Vidsrc**: [Server 1](https://vidsrc.to/embed/movie/${imdbId})\n`;
+          watchLinks += `- **Vidsrc.me**: [Server 2](https://vidsrc.me/embed/movie?imdb=${imdbId})\n`;
+          watchLinks += `- **Multiembed**: [Server 3](https://multiembed.to/?video_id=${imdbId})\n`;
+          watchLinks += `- **23Movies**: [Server 4](https://play2.123moviesvideo.net/imdb/${imdbId})\n`;
+        } else {
+          watchLinks += `- **Vidsrc.xyz**: [Server 1](https://vidsrc.xyz/embed/movie/${movie.id})\n`;
+          watchLinks += `- **Embed.su**: [Server 2](https://embed.su/embed/movie/${movie.id})\n`;
+        }
+      }
+    } catch (detailErr) {
+      console.warn("[MoviesAPI] Failed to fetch movie details for IMDb link:", detailErr.message);
+    }
+
     return {
-      text: `🎬 **${movie.title}** ${movie.original_title !== movie.title ? `(${movie.original_title})` : ""}\n\n⭐ Rating: **${movie.vote_average}/10** (${movie.vote_count} votes)\n📅 Release: ${movie.release_date || "N/A"}\n📝 Overview: ${movie.overview || "No description."}\n🎭 Popularity: ${movie.popularity?.toFixed(0) || "N/A"}${movie.poster_path ? `\n🖼️ Poster: https://image.tmdb.org/t/p/w500${movie.poster_path}` : ""}`
+      text: `🎬 **${movie.title}** ${movie.original_title !== movie.title ? `(${movie.original_title})` : ""}\n\n⭐ Rating: **${movie.vote_average}/10** (${movie.vote_count} votes)\n📅 Release: ${movie.release_date || "N/A"}\n📝 Overview: ${movie.overview || "No description."}\n🎭 Popularity: ${movie.popularity?.toFixed(0) || "N/A"}${movie.poster_path ? `\n🖼️ Poster: https://image.tmdb.org/t/p/w500${movie.poster_path}` : ""}${watchLinks}`
     };
   } catch (err) {
     return { error: "Movie fetch failed: " + err.message };
