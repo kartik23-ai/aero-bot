@@ -4342,6 +4342,29 @@ const routes = {
   "GET /api/control-centre/memory": getControlCentreMemory,
   "POST /api/control-centre/memory/clear": clearControlCentreMemory,
   "POST /api/control-centre/keys/verify": verifyControlCentreKeys,
+  "GET /api/control-centre/keys/health": () => {
+    const { providers } = require("./providers");
+    if (!global.apiKeysMonitor) {
+      // Trigger lazy init if not already loaded
+      try {
+        const dummy = providers.generateVideo("init").catch(() => {});
+      } catch (_) {}
+    }
+    const report = {};
+    if (global.apiKeysMonitor) {
+      for (const [provider, list] of Object.entries(global.apiKeysMonitor)) {
+        report[provider] = list.map(k => ({
+          keyPreview: k.key ? (k.key.substring(0, 8) + "...") : "Empty",
+          source: k.source,
+          status: k.status,
+          successes: k.successes,
+          failures: k.failures,
+          lastUsed: k.lastUsed
+        }));
+      }
+    }
+    return json(200, { keysHealth: report });
+  },
   "GET /api/debug/ytdlp": debugYtdlp
 };
 
